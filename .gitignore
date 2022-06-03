@@ -1,5 +1,5 @@
 build
 dist
-envass.egg-info
+puchu.egg-info
 .idea
-envass/__pycache__
+puchu/__pycache__
