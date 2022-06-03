@@ -6,137 +6,6 @@ from scipy.interpolate import interp1d
 import warnings
 from scipy.signal import find_peaks,savgol_filter
 
-def meta_depths(Temp, depths, slope=0.1, seasonal=False, mixed_cutoff=1, smooth=False, s=0.2, thermocline_output=False):
-    '''
-    Calculates the top and bottom depths of the metalimnion in a stratified
-    lake. The metalimnion is defined as the water stratum in a stratified lake
-    with the steepest thermal gradient and is demarcated by the bottom of the
-    epilimnion and top of the hypolimnion.
-    
-    Parameters
-    ----------
-    Temp :  array_like
-        a numeric vector of water temperature in degrees C
-    depths : array_like
-        a numeric vector corresponding to the depths (in m) of the Temp
-        measurements
-    slope : scalar, default: 0.1
-        a numeric vector corresponding to the minimum slope
-    seasonal : bool, default: False
-        Calculates the metalimnion based on the seasonal thermocline if set to True.
-    mixed_cutoff : scalar, default: 1
-        A cutoff (deg C) where below this threshold, thermo.depth and meta.depths are 
-        not calculated (NaN is returned). Defaults to 1 deg C.
-    smooth : bool, default: False
-        Smooth the curve following the scipy savgol filter (window size: 1/5 of the 
-        depths length, order:3, method=nearest)
-        Smoothing is recommended when the thermocline is located at a lower resolution 
-        sensors (sensors are more spaced at the thermocline)
-    s : array_like, default : 0.2
-        Salinity of the water column in PSU
-    thermocline_output : bool, default : False
-        Return the calculated thermocline depth if set to True 
-
-    Returns 
-    ----------
-    metatop : array_like
-        A numeric vector of the top and bottom metalimnion depths in meters.
-        Returns the bottom depth if no distinct metalimion top and bottom found.
-    
-    See also
-    ----------
-    lakewater.thermocline
-
-    Examples
-    ----------
-    >>> temp = np.array([14.3,14,12.1,10,9.7,9.5])
-    ...     depth = np.array([1,2,3,4,5,6])
-    ...     meta_depths(temp, depth, thermocline_output=True)
-    {'thermocline': array([3], dtype=int64), 'top_metalimnion': array([2.]), 'bot_metalimnion': array([4.])}
-
-    >>> lw.meta_depths(temp,depth, thermocline_output=True, smooth={"window_size":5, "mode":"nearest", "order":3})
-    {'thermocline': array([3], dtype=int64), 'top_metalimnion': array([2.]), 'bot_metalimnion': array([4.])}
-
-    >>> lw.meta_depths(temp,depth, mixed_cutoff=10, thermocline_output=True)
-    {'thermocline': array([nan]), 'top_metalimnion': array([nan]), 'bot_metalimnion': array([nan])}
-
-
-    References
-    ----------
-    LakeAnalyzer in R
-    Wetzel, R. G. 2001. Limnology: Lake and River Ecosystems, 3rd ed. Academic Press.'''
-
-    #Ensure that we are interpreting the lines as time and columns as depths
-    Temp = format_Temp(depths, Temp)
-
-    if np.isnan(Temp).all():
-        warnings.warn("Could not deduce thermocline with only nan vector")
-        return depths*np.nan
-    if Temp.shape[1]<3:
-        warnings.warn("Could not deduce thermocline with less than 3 measurements")
-        return depths*np.nan
-    if len(depths)!=len(np.unique(depths)):
-        warnings.warn("depths must be unique")
-        return np.nan
-
-    if smooth:
-        if type(smooth)==dict:
-            window_size = smooth.get("window_size",round_up_to_odd(len(depths)/5))
-            mode = smooth.get("method",'nearest')
-            order = smooth.get("order",3)
-        else:
-            window_size= round_up_to_odd(len(depths)/5)
-            mode = 'nearest'
-            order = 3
-        new_Temp = savgol_filter(Temp, window_size, order, mode=mode)
-        old_Temp = Temp.copy()
-        Temp=new_Temp
-
-    thermo = thermocline(Temp, depths, seasonal=seasonal, mixed_cutoff=mixed_cutoff, index=True, gridded=True)
-    if seasonal:
-        thermoInd = thermo["seasonal_thermocline_index"]
-        thermoD = thermo["seasonal_thermocline"]
-    else:
-        thermoInd = thermo["thermocline_index"]
-        thermoD = thermo["thermocline"]
-
-    rhoVar = sw.dens0(s=s,t=Temp)
-    drho_dz=np.diff(rhoVar)/np.diff(depths)
-    numDepths=len(depths)
-    Tdepth = [(a+b)/2 for a,b in zip(depths, depths[1:])]
-    time_ind=np.arange(drho_dz.shape[0])
-    metaBot_depth = np.ones(time_ind.size)*np.nan
-    metaTop_depth = np.ones(time_ind.size)*np.nan
-
-    for t in time_ind:
-        for depthInd in range(thermoInd[t],len(Tdepth)):
-            if not np.isnan(drho_dz[t,depthInd]) and (drho_dz[t,depthInd] < slope):
-                metaBot_depth[t]= Tdepth[depthInd]
-                break
-
-        if (depthInd-thermoInd[t]>=1)and(not np.isnan(drho_dz[t,depthInd]))and(drho_dz[t,depthInd]>slope):
-             metaBot_depth[t] = np.interp(slope, drho_dz[t,thermoInd:depthInd], Tdepth[thermoInd:depthInd])
-
-
-        for depthInd in range(thermoInd[t], -1, -1):
-            if not np.isnan(drho_dz[t,depthInd]) and (drho_dz[t,depthInd] < slope):
-                metaTop_depth[t]=Tdepth[depthInd+1]
-                break
-
-        if (thermoInd[t]-depthInd>=1)and(not np.isnan(drho_dz[t,depthInd]))and(drho_dz[t,depthInd]>slope):
-             metaTop_depth[t] = np.interp(slope, drho_dz[t,depthInd:thermoInd[t]], depths[depthInd:thermoInd[t]])
-            
-        if metaBot_depth[t]<thermoD[t]:
-            metaBot_depth[t]=thermoD[t]
-        if metaTop_depth[t]>thermoD[t]:
-            metaTop_depth[t]=thermoD[t]
-    metaBot_depth = set_nan(thermoD, metaBot_depth)
-    metaTop_depth = set_nan(thermoD, metaTop_depth)
-    if thermocline_output:
-        return {'thermocline':thermoD,'top_metalimnion':metaTop_depth, 'bot_metalimnion':metaBot_depth}
-    return {'top_metalimnion':metaTop_depth, 'bot_metalimnion':metaBot_depth}
-
-
 def thermocline(Temp, depths, Smin=0.1, seasonal=True, mixed_cutoff=1, s=0.2, smooth=False, index=False, gridded=False):
     '''
     Calculate depth of the thermocline from a temperature profile.
@@ -234,6 +103,136 @@ def thermocline(Temp, depths, Smin=0.1, seasonal=True, mixed_cutoff=1, s=0.2, sm
     if is_not_significant.any():
         cutoff_nb = len(cutoff_time_index)
         warnings.warn(f"Temperature difference within the profile is too low to detect any thermocline for {cutoff_nb} profiles")
+
+def meta_depths(Temp, depths, slope=0.1, seasonal=False, mixed_cutoff=1, smooth=False, s=0.2, thermocline_output=False):
+    '''
+    Calculates the top and bottom depths of the metalimnion in a stratified
+    lake. The metalimnion is defined as the water stratum in a stratified lake
+    with the steepest thermal gradient and is demarcated by the bottom of the
+    epilimnion and top of the hypolimnion.
+    
+    Parameters
+    ----------
+    Temp :  array_like
+        a numeric vector of water temperature in degrees C
+    depths : array_like
+        a numeric vector corresponding to the depths (in m) of the Temp
+        measurements
+    slope : scalar, default: 0.1
+        a numeric vector corresponding to the minimum slope
+    seasonal : bool, default: False
+        Calculates the metalimnion based on the seasonal thermocline if set to True.
+    mixed_cutoff : scalar, default: 1
+        A cutoff (deg C) where below this threshold, thermo.depth and meta.depths are 
+        not calculated (NaN is returned). Defaults to 1 deg C.
+    smooth : bool, default: False
+        Smooth the curve following the scipy savgol filter (window size: 1/5 of the 
+        depths length, order:3, method=nearest)
+        Smoothing is recommended when the thermocline is located at a lower resolution 
+        sensors (sensors are more spaced at the thermocline)
+    s : array_like, default : 0.2
+        Salinity of the water column in PSU
+    thermocline_output : bool, default : False
+        Return the calculated thermocline depth if set to True 
+
+    Returns 
+    ----------
+    metatop : array_like
+        A numeric vector of the top and bottom metalimnion depths in meters.
+        Returns the bottom depth if no distinct metalimion top and bottom found.
+    
+    See also
+    ----------
+    lakewater.thermocline
+
+    Examples
+    ----------
+    >>>     temp = np.array([14.3,14,12.1,10,9.7,9.5])
+    ...     depth = np.array([1,2,3,4,5,6])
+    ...     meta_depths(temp, depth, thermocline_output=True)
+    {'thermocline': array([3], dtype=int64), 'top_metalimnion': array([2.]), 'bot_metalimnion': array([4.])}
+
+    >>> lw.meta_depths(temp,depth, thermocline_output=True, smooth={"window_size":5, "mode":"nearest", "order":3})
+    {'thermocline': array([3], dtype=int64), 'top_metalimnion': array([2.]), 'bot_metalimnion': array([4.])}
+
+    >>> lw.meta_depths(temp,depth, mixed_cutoff=10, thermocline_output=True)
+    {'thermocline': array([nan]), 'top_metalimnion': array([nan]), 'bot_metalimnion': array([nan])}
+
+
+    References
+    ----------
+    LakeAnalyzer in R
+    Wetzel, R. G. 2001. Limnology: Lake and River Ecosystems, 3rd ed. Academic Press.'''
+
+    #Ensure that we are interpreting the lines as time and columns as depths
+    Temp = format_Temp(depths, Temp)
+
+    if np.isnan(Temp).all():
+        warnings.warn("Could not deduce thermocline with only nan vector")
+        return depths*np.nan
+    if Temp.shape[1]<3:
+        warnings.warn("Could not deduce thermocline with less than 3 measurements")
+        return depths*np.nan
+    if len(depths)!=len(np.unique(depths)):
+        warnings.warn("depths must be unique")
+        return np.nan
+
+    if smooth:
+        if type(smooth)==dict:
+            window_size = smooth.get("window_size",round_up_to_odd(len(depths)/5))
+            mode = smooth.get("method",'nearest')
+            order = smooth.get("order",3)
+        else:
+            window_size= round_up_to_odd(len(depths)/5)
+            mode = 'nearest'
+            order = 3
+        new_Temp = savgol_filter(Temp, window_size, order, mode=mode)
+        old_Temp = Temp.copy()
+        Temp=new_Temp
+
+    thermo = thermocline(Temp, depths, seasonal=seasonal, mixed_cutoff=mixed_cutoff, index=True, gridded=True)
+    if seasonal:
+        thermoInd = thermo["seasonal_thermocline_index"]
+        thermoD = thermo["seasonal_thermocline"]
+    else:
+        thermoInd = thermo["thermocline_index"]
+        thermoD = thermo["thermocline"]
+
+    rhoVar = sw.dens0(s=s,t=Temp)
+    drho_dz=np.diff(rhoVar)/np.diff(depths)
+    numDepths=len(depths)
+    Tdepth = [(a+b)/2 for a,b in zip(depths, depths[1:])]
+    time_ind=np.arange(drho_dz.shape[0])
+    metaBot_depth = np.ones(time_ind.size)*np.nan
+    metaTop_depth = np.ones(time_ind.size)*np.nan
+
+    for t in time_ind:
+        for depthInd in range(thermoInd[t],len(Tdepth)):
+            if not np.isnan(drho_dz[t,depthInd]) and (drho_dz[t,depthInd] < slope):
+                metaBot_depth[t]= Tdepth[depthInd]
+                break
+
+        if (depthInd-thermoInd[t]>=1)and(not np.isnan(drho_dz[t,depthInd]))and(drho_dz[t,depthInd]>slope):
+             metaBot_depth[t] = np.interp(slope, drho_dz[t,thermoInd:depthInd], Tdepth[thermoInd:depthInd])
+
+
+        for depthInd in range(thermoInd[t], -1, -1):
+            if not np.isnan(drho_dz[t,depthInd]) and (drho_dz[t,depthInd] < slope):
+                metaTop_depth[t]=Tdepth[depthInd+1]
+                break
+
+        if (thermoInd[t]-depthInd>=1)and(not np.isnan(drho_dz[t,depthInd]))and(drho_dz[t,depthInd]>slope):
+             metaTop_depth[t] = np.interp(slope, drho_dz[t,depthInd:thermoInd[t]], depths[depthInd:thermoInd[t]])
+            
+        if metaBot_depth[t]<thermoD[t]:
+            metaBot_depth[t]=thermoD[t]
+        if metaTop_depth[t]>thermoD[t]:
+            metaTop_depth[t]=thermoD[t]
+    metaBot_depth = set_nan(thermoD, metaBot_depth)
+    metaTop_depth = set_nan(thermoD, metaTop_depth)
+    if thermocline_output:
+        return {'thermocline':thermoD,'top_metalimnion':metaTop_depth, 'bot_metalimnion':metaBot_depth}
+    return {'top_metalimnion':metaTop_depth, 'bot_metalimnion':metaBot_depth}
 
     def averaged_thermoD(depths, drho_dz, thermoInd, thermoD):
         '''
