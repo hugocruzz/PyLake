@@ -27,5 +27,5 @@ setup(
         'seawater==3.3.4'
     ],
     license="MIT",
-    keywords=['python', 'dexa', 'Lake analyzer', 'environmental data', 'Physical properties'],
+    keywords=['python', 'puchu', 'Lake analyzer', 'environmental data', 'Physical properties'],
 )
