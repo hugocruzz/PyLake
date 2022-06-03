@@ -4,10 +4,10 @@ with open('README.md') as f:
     README = f.read()
 
 VERSION = '0.0.1'
-DESCRIPTION = 'Dexa'
+DESCRIPTION = 'puchu'
 
 setup(
-    name="dexa",
+    name="puchu",
     version=VERSION,
     author="Hugo Cruz",
     author_email="<huggcruzz@gmail.com>",
@@ -15,7 +15,7 @@ setup(
     long_description=README,
     long_description_content_type='text/markdown',
     packages=find_packages(),
-    url='https://github.com/hugocruzz/Dexa',
+    url='https://github.com/hugocruzz/puchu',
     install_requires=[
         'pandas==1.0.1',
         'numpy==1.18.1',
