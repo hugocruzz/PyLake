@@ -1,6 +1,5 @@
 import numpy as np
 from .functions import *
-import matplotlib.pyplot as plt
 import seawater as sw
 from scipy.interpolate import interp1d
 import warnings
