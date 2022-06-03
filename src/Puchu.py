@@ -104,6 +104,110 @@ def thermocline(Temp, depths, Smin=0.1, seasonal=True, mixed_cutoff=1, s=0.2, sm
         cutoff_nb = len(cutoff_time_index)
         warnings.warn(f"Temperature difference within the profile is too low to detect any thermocline for {cutoff_nb} profiles")
 
+    def averaged_thermoD(depths, drho_dz, thermoInd, thermoD):
+        '''
+        Estimate where the thermocline lies even between two temperature 
+        measurement depths, giving a potentially finer-scale estimate 
+        than usual techniques.
+
+        Parameters
+        -----------
+        depths: array_like
+            depth array
+        drho_dz: array_like 
+            density gradient 
+        thermoInd: array_like
+            thermocline index corresponding to the depths 
+        thermoD: array_like
+            thermocline depth in which the thermocline is changed.
+        
+        Returns
+        -----------
+        thermoD: array_like
+            the adjusted thermocline depth.
+        '''
+        mask_updown=(thermoD>1)&(thermoInd<len(depths)-1)
+        #if thermoInd is maximum, remove it (the mask will not calculate this point anyway)
+        remove_bot = np.where((thermoInd==depths.size-1))[0]
+        thermoInd[remove_bot] = thermoInd[remove_bot]-1
+
+        thermoD_drho_dz = drho_dz[np.arange(drho_dz.shape[0]), thermoInd]
+        down_thermoD_drho_dz = drho_dz[np.arange(drho_dz.shape[0]), thermoInd+1]
+        up_thermoD_drho_dz = drho_dz[np.arange(drho_dz.shape[0]), thermoInd-1]
+        D=depths[thermoInd]
+        dnD=depths[thermoInd+1]
+        upD=depths[thermoInd-1]
+        Sdn = -(dnD-D)/(down_thermoD_drho_dz-thermoD_drho_dz)
+        Sdn = -(dnD-D)/(down_thermoD_drho_dz-thermoD_drho_dz)
+        Sup = (D-upD)/(thermoD_drho_dz-up_thermoD_drho_dz)
+
+        mask_inf = (~np.isinf(Sup)) & (~np.isinf(Sdn))
+        mask = mask_inf & mask_updown
+
+        new_thermoD = dnD*(Sdn/(Sdn+Sup))+upD*(Sup/(Sdn+Sup))
+        thermoD[mask] = new_thermoD[mask]
+        return thermoD
+
+    if smooth:
+        if type(smooth)==dict:
+            window_size = smooth.get("window_size",round_up_to_odd(len(depths)/5))
+            mode = smooth.get("method",'nearest')
+            order = smooth.get("order",3)
+        else:
+            window_size= round_up_to_odd(len(depths)/5)
+            mode = 'nearest'
+            order = 3
+        new_Temp = savgol_filter(Temp, window_size, order, mode=mode)
+        old_Temp = Temp.copy()
+        Temp=new_Temp
+
+    rhoVar = sw.dens0(s=s,t=Temp)
+    dRhoPerc = 0.15
+
+    drho_dz=np.diff(rhoVar)/np.diff(depths)
+    depth_dz = np.array([(a+b)/2 for a,b in zip(depths, depths[1:])]) 
+    mDrhoZ = np.nanmax(drho_dz,axis=1)
+    thermoInd_dz = np.nanargmax(drho_dz, axis=1)
+    thermoD = depth_dz[thermoInd_dz]
+
+    thermoD = averaged_thermoD(depth_dz, drho_dz, thermoInd_dz, thermoD.copy())
+    thermoInd = find_nearest_index(depth_dz,thermoD)
+    thermoD[cutoff_time_index] = np.nan
+
+    if not seasonal:
+        if gridded:
+            thermoD = find_nearest(depths,thermoD)
+        if index:
+            return {'thermocline_index':thermoInd, 'thermocline':thermoD}
+        return {'thermocline':thermoD}
+    else: 
+        dRhoCut=np.nanmax([dRhoPerc*mDrhoZ,Smin*np.ones(Temp.shape[0])], axis=0)
+        SthermoD = thermoD.copy()
+        SthermoInd_dz = thermoInd_dz.copy()
+
+        for i in range(0,drho_dz.shape[0]):
+            locs, peaks=find_peaks(drho_dz[i,:],height=dRhoCut[i])
+            pks = peaks["peak_heights"]
+            if len(pks)!=0:
+                mDrhoZ[i] = pks[-1]
+                SthermoInd_dz[i] = locs[-1]
+        SthermoD = averaged_thermoD(depths, drho_dz, SthermoInd_dz, SthermoD.copy())
+
+        idxthermoD = np.where(SthermoD<thermoD)[0]
+        SthermoD[idxthermoD]=thermoD[idxthermoD]
+        SthermoInd_dz[idxthermoD]=thermoInd[idxthermoD]
+        
+        SthermoInd = find_nearest_index(depth_dz,SthermoD)
+        SthermoD[cutoff_time_index] = np.nan 
+
+        if gridded:
+            SthermoD = find_nearest(depths,SthermoD)
+            thermoD = find_nearest(depths,thermoD)
+        if index:
+            return {'seasonal_thermocline_index':SthermoInd, 'seasonal_thermocline':SthermoD, 'thermocline_index':thermoInd, 'thermocline':thermoD}
+        return {'thermocline':thermoD, 'seasonal_thermocline':SthermoD}
+
+
 def meta_depths(Temp, depths, slope=0.1, seasonal=False, mixed_cutoff=1, smooth=False, s=0.2, thermocline_output=False):
     '''
     Calculates the top and bottom depths of the metalimnion in a stratified
@@ -233,110 +337,7 @@ def meta_depths(Temp, depths, slope=0.1, seasonal=False, mixed_cutoff=1, smooth=
     if thermocline_output:
         return {'thermocline':thermoD,'top_metalimnion':metaTop_depth, 'bot_metalimnion':metaBot_depth}
     return {'top_metalimnion':metaTop_depth, 'bot_metalimnion':metaBot_depth}
-
-    def averaged_thermoD(depths, drho_dz, thermoInd, thermoD):
-        '''
-        Estimate where the thermocline lies even between two temperature 
-        measurement depths, giving a potentially finer-scale estimate 
-        than usual techniques.
-
-        Parameters
-        -----------
-        depths: array_like
-            depth array
-        drho_dz: array_like 
-            density gradient 
-        thermoInd: array_like
-            thermocline index corresponding to the depths 
-        thermoD: array_like
-            thermocline depth in which the thermocline is changed.
-        
-        Returns
-        -----------
-        thermoD: array_like
-            the adjusted thermocline depth.
-        '''
-        mask_updown=(thermoD>1)&(thermoInd<len(depths)-1)
-        #if thermoInd is maximum, remove it (the mask will not calculate this point anyway)
-        remove_bot = np.where((thermoInd==depths.size-1))[0]
-        thermoInd[remove_bot] = thermoInd[remove_bot]-1
-
-        thermoD_drho_dz = drho_dz[np.arange(drho_dz.shape[0]), thermoInd]
-        down_thermoD_drho_dz = drho_dz[np.arange(drho_dz.shape[0]), thermoInd+1]
-        up_thermoD_drho_dz = drho_dz[np.arange(drho_dz.shape[0]), thermoInd-1]
-        D=depths[thermoInd]
-        dnD=depths[thermoInd+1]
-        upD=depths[thermoInd-1]
-        Sdn = -(dnD-D)/(down_thermoD_drho_dz-thermoD_drho_dz)
-        Sdn = -(dnD-D)/(down_thermoD_drho_dz-thermoD_drho_dz)
-        Sup = (D-upD)/(thermoD_drho_dz-up_thermoD_drho_dz)
-
-        mask_inf = (~np.isinf(Sup)) & (~np.isinf(Sdn))
-        mask = mask_inf & mask_updown
-
-        new_thermoD = dnD*(Sdn/(Sdn+Sup))+upD*(Sup/(Sdn+Sup))
-        thermoD[mask] = new_thermoD[mask]
-        return thermoD
-
-    if smooth:
-        if type(smooth)==dict:
-            window_size = smooth.get("window_size",round_up_to_odd(len(depths)/5))
-            mode = smooth.get("method",'nearest')
-            order = smooth.get("order",3)
-        else:
-            window_size= round_up_to_odd(len(depths)/5)
-            mode = 'nearest'
-            order = 3
-        new_Temp = savgol_filter(Temp, window_size, order, mode=mode)
-        old_Temp = Temp.copy()
-        Temp=new_Temp
-
-    rhoVar = sw.dens0(s=s,t=Temp)
-    dRhoPerc = 0.15
-
-    drho_dz=np.diff(rhoVar)/np.diff(depths)
-    depth_dz = np.array([(a+b)/2 for a,b in zip(depths, depths[1:])]) 
-    mDrhoZ = np.nanmax(drho_dz,axis=1)
-    thermoInd_dz = np.nanargmax(drho_dz, axis=1)
-    thermoD = depth_dz[thermoInd_dz]
-
-    thermoD = averaged_thermoD(depth_dz, drho_dz, thermoInd_dz, thermoD.copy())
-    thermoInd = find_nearest_index(depth_dz,thermoD)
-    thermoD[cutoff_time_index] = np.nan
-
-    if not seasonal:
-        if gridded:
-            thermoD = find_nearest(depths,thermoD)
-        if index:
-            return {'thermocline_index':thermoInd, 'thermocline':thermoD}
-        return {'thermocline':thermoD}
-    else: 
-        dRhoCut=np.nanmax([dRhoPerc*mDrhoZ,Smin*np.ones(Temp.shape[0])], axis=0)
-        SthermoD = thermoD.copy()
-        SthermoInd_dz = thermoInd_dz.copy()
-
-        for i in range(0,drho_dz.shape[0]):
-            locs, peaks=find_peaks(drho_dz[i,:],height=dRhoCut[i])
-            pks = peaks["peak_heights"]
-            if len(pks)!=0:
-                mDrhoZ[i] = pks[-1]
-                SthermoInd_dz[i] = locs[-1]
-        SthermoD = averaged_thermoD(depths, drho_dz, SthermoInd_dz, SthermoD.copy())
-
-        idxthermoD = np.where(SthermoD<thermoD)[0]
-        SthermoD[idxthermoD]=thermoD[idxthermoD]
-        SthermoInd_dz[idxthermoD]=thermoInd[idxthermoD]
-        
-        SthermoInd = find_nearest_index(depth_dz,SthermoD)
-        SthermoD[cutoff_time_index] = np.nan 
-
-        if gridded:
-            SthermoD = find_nearest(depths,SthermoD)
-            thermoD = find_nearest(depths,thermoD)
-        if index:
-            return {'seasonal_thermocline_index':SthermoInd, 'seasonal_thermocline':SthermoD, 'thermocline_index':thermoInd, 'thermocline':thermoD}
-        return {'thermocline':thermoD, 'seasonal_thermocline':SthermoD}
-
+    
 def wedderburn(delta_rho, metaT, uSt, AvHyp_rho, Lo=False, Ao=False, g=9.81):
     ''' 
     Wedderburn Number (Wn) is a dimensionless parameter measuring the balance

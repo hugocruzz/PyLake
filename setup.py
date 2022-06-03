@@ -17,15 +17,13 @@ setup(
     packages=find_packages(),
     url='https://github.com/hugocruzz/puchu',
     install_requires=[
-        'pandas==1.0.1',
-        'numpy==1.18.1',
-        'netCDF4==1.5.3',
+        'numpy==1.19.5',
+        'pandas==1.1.5',
         'PyYAML==6.0',
-        'matplotlib==3.1.3',
         'seaborn==0.11.1',
         'scipy==1.5.4',
         'dask==2022.2.0',
-        'xarray==0.19.0',
+        'xarray==0.19.0',   
         'seawater==3.3.4'
     ],
     license="MIT",
