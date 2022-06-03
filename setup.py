@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 with open('README.md') as f:
     README = f.read()
 
-VERSION = '0.0.1'
+VERSION = '0.0.2'
 DESCRIPTION = 'puchu'
 
 setup(
@@ -18,12 +18,11 @@ setup(
     url='https://github.com/hugocruzz/puchu',
     install_requires=[
         'numpy==1.22.4',
-        'pandas==1.1.5',
+        'pandas==1.4.2',
         'PyYAML==6.0',
-        'seaborn==0.11.1',
-        'scipy==1.5.4',
-        'dask==2022.2.0',
-        'xarray==0.19.0',   
+        'scipy==1.8.1',
+        'dask==2022.5.2',
+        'xarray==2022.3.0',   
         'seawater==3.3.4'
     ],
     license="MIT",
