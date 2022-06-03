@@ -17,7 +17,7 @@ setup(
     packages=find_packages(),
     url='https://github.com/hugocruzz/puchu',
     install_requires=[
-        'numpy==1.19.5',
+        'numpy==1.22.4',
         'pandas==1.1.5',
         'PyYAML==6.0',
         'seaborn==0.11.1',
