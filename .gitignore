@@ -1,0 +1,5 @@
+build
+dist
+envass.egg-info
+.idea
+envass/__pycache__
