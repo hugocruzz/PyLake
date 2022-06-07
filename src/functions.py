@@ -1,5 +1,4 @@
 import numpy as np
-
 def format_Temp(depths, Temp):
     if Temp.ndim==2:
         if Temp.shape[0]==depths.shape[0]:
