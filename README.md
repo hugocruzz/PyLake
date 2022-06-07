@@ -1,6 +1,7 @@
 # Puchu
 
 This work present methods used to compute meaningful physical properties in aquatic sciences.
+
 Multi-dimensional array (time and depth) are compatible.
 
 Algorithms and documentation are inspired by LakeAnalyzer in R (https://github.com/GLEON/rLakeAnalyzer)
