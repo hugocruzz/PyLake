@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 with open('README.md') as f:
     README = f.read()
 
-VERSION = '0.0.6'
+VERSION = '0.0.8'
 DESCRIPTION = 'puchu'
 
 setup(
@@ -17,13 +17,13 @@ setup(
     packages=find_packages(),
     url='https://github.com/hugocruzz/puchu',
     install_requires=[
-        'numpy==1.22.4',
-        'pandas==1.4.2',
-        'PyYAML==6.0',
-        'scipy==1.8.1',
-        'dask==2022.5.2',
-        'xarray==2022.3.0',   
-        'seawater==3.3.4'
+        'numpy>=1.19.5',
+        'pandas>=1.1.5',
+        'PyYAML>=6.0',
+        'scipy>=1.5.4',
+        'dask>=2022.02.1',
+        'xarray>=0.19.0',   
+        'seawater>=3.3.4'
     ],
     license="MIT",
     keywords=['python', 'puchu', 'Lake analyzer', 'environmental data', 'Physical properties'],

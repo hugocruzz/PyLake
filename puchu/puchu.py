@@ -718,7 +718,7 @@ def buoyancy_freq(Temp, depths, g=9.81):
 
 def Average_layer_temp(Temp, depths, depth_ref, top=False, bot=False):
     '''
-    Perform the layer average temperature based on the thermocline depth 
+    Perform the average layer temperature based on the thermocline depth 
 
     Parameters
     -----------
