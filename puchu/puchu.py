@@ -104,50 +104,6 @@ def thermocline(Temp, depths, Smin=0.1, seasonal=True, mixed_cutoff=1, s=0.2, sm
         cutoff_nb = len(cutoff_time_index)
         warnings.warn(f"Temperature difference within the profile is too low to detect any thermocline for {cutoff_nb} profiles")
 
-    def averaged_thermoD(depths, drho_dz, thermoInd, thermoD):
-        '''
-        Estimate where the thermocline lies even between two temperature 
-        measurement depths, giving a potentially finer-scale estimate 
-        than usual techniques.
-
-        Parameters
-        -----------
-        depths: array_like
-            depth array
-        drho_dz: array_like 
-            density gradient 
-        thermoInd: array_like
-            thermocline index corresponding to the depths 
-        thermoD: array_like
-            thermocline depth in which the thermocline is changed.
-        
-        Returns
-        -----------
-        thermoD: array_like
-            the adjusted thermocline depth.
-        '''
-        mask_updown=(thermoD>1)&(thermoInd<len(depths)-1)
-        #if thermoInd is maximum, remove it (the mask will not calculate this point anyway)
-        remove_bot = np.where((thermoInd==depths.size-1))[0]
-        thermoInd[remove_bot] = thermoInd[remove_bot]-1
-
-        thermoD_drho_dz = drho_dz[np.arange(drho_dz.shape[0]), thermoInd]
-        down_thermoD_drho_dz = drho_dz[np.arange(drho_dz.shape[0]), thermoInd+1]
-        up_thermoD_drho_dz = drho_dz[np.arange(drho_dz.shape[0]), thermoInd-1]
-        D=depths[thermoInd]
-        dnD=depths[thermoInd+1]
-        upD=depths[thermoInd-1]
-        Sdn = -(dnD-D)/(down_thermoD_drho_dz-thermoD_drho_dz)
-        Sdn = -(dnD-D)/(down_thermoD_drho_dz-thermoD_drho_dz)
-        Sup = (D-upD)/(thermoD_drho_dz-up_thermoD_drho_dz)
-
-        mask_inf = (~np.isinf(Sup)) & (~np.isinf(Sdn))
-        mask = mask_inf & mask_updown
-
-        new_thermoD = dnD*(Sdn/(Sdn+Sup))+upD*(Sup/(Sdn+Sup))
-        thermoD[mask] = new_thermoD[mask]
-        return thermoD
-
     if smooth:
         if type(smooth)==dict:
             window_size = smooth.get("window_size",round_up_to_odd(len(depths)/5))
@@ -170,7 +126,7 @@ def thermocline(Temp, depths, Smin=0.1, seasonal=True, mixed_cutoff=1, s=0.2, sm
     thermoInd_dz = np.nanargmax(drho_dz, axis=1)
     thermoD = depth_dz[thermoInd_dz]
 
-    thermoD = averaged_thermoD(depth_dz, drho_dz, thermoInd_dz, thermoD.copy())
+    thermoD = refine_scale(depth_dz, drho_dz, thermoInd_dz, thermoD.copy())
     thermoInd = find_nearest_index(depth_dz,thermoD)
     thermoD[cutoff_time_index] = np.nan
 
@@ -191,7 +147,7 @@ def thermocline(Temp, depths, Smin=0.1, seasonal=True, mixed_cutoff=1, s=0.2, sm
             if len(pks)!=0:
                 mDrhoZ[i] = pks[-1]
                 SthermoInd_dz[i] = locs[-1]
-        SthermoD = averaged_thermoD(depths, drho_dz, SthermoInd_dz, SthermoD.copy())
+        SthermoD = refine_scale(depths, drho_dz, SthermoInd_dz, SthermoD.copy())
 
         idxthermoD = np.where(SthermoD<thermoD)[0]
         SthermoD[idxthermoD]=thermoD[idxthermoD]
@@ -718,7 +674,7 @@ def buoyancy_freq(Temp, depths, g=9.81):
 
 def Average_layer_temp(Temp, depths, depth_ref, top=False, bot=False):
     '''
-    Perform the average layer temperature based on the thermocline depth 
+    Perform the layer average temperature based on the thermocline depth 
 
     Parameters
     -----------
@@ -760,7 +716,7 @@ def Average_layer_temp(Temp, depths, depth_ref, top=False, bot=False):
     mean_temp = masked_temp.mean(dim="depth")
     return mean_temp.to_numpy()
 
-def mixed_layer_depth(depths, Temp, threshold=0.1):
+def mixed_layer_depth(depths, Temp, threshold=0.1, method=None):
     '''
     Calculates the mixed layer depth by using the difference temperature method.
     The depth of the mixed layer is defined as the depth where the temperature difference with the temperature of the surface is greater than a threshold (default 0.1°C).
@@ -790,6 +746,13 @@ def mixed_layer_depth(depths, Temp, threshold=0.1):
     Temp = format_Temp(depths, Temp)
     T_surf = Temp[:,0]
     T_diff = T_surf-Temp.T-threshold
-    hML_idx = np.argmin(np.abs(T_diff), axis=0) + 1
+    hML_idx = np.nanargmin(np.abs(T_diff), axis=0)
     hML = depths[hML_idx]
+    if method=='interp':
+        #Finding the root for a ndarray is difficult. Another method might exist.
+        hML_refined = []
+        for t in range(0,Temp.shape[0]):
+            f = interp1d(depths, T_diff[:,t])
+            hML_refined=np.append(hML_refined,f(0))
+        hML=hML_refined
     return hML
