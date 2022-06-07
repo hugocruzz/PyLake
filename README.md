@@ -28,7 +28,7 @@ Future updates:
 'pip install puchu'
 
 ## Usage
-'''
+'''python
 import puchu as chu
 import numpy as np
 
