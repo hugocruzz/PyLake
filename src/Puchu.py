@@ -4,6 +4,7 @@ import seawater as sw
 from scipy.interpolate import interp1d
 import warnings
 from scipy.signal import find_peaks,savgol_filter
+import xarray as xr
 
 def thermocline(Temp, depths, Smin=0.1, seasonal=True, mixed_cutoff=1, s=0.2, smooth=False, index=False, gridded=False):
     '''
