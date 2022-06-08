@@ -251,6 +251,7 @@ def meta_depths(Temp, depths, slope=0.1, seasonal=False, mixed_cutoff=1, smooth=
         Temp=new_Temp
 
     thermo = thermocline(Temp, depths, seasonal=seasonal, mixed_cutoff=mixed_cutoff, index=True, gridded=True)
+    
     if seasonal:
         thermoInd = thermo["seasonal_thermocline_index"]
         thermoD = thermo["seasonal_thermocline"]
@@ -412,7 +413,6 @@ def schmidt_stability(Temp, depths, bthA, bthD, sal = 0.2, g=9.81, dz=0.1, NaN_i
     equation
     ----------
     g/A0 int(0,zmax, (zv-z)(rho_i-rho_v)A(z)dz)
-
     '''
     Temp = format_Temp(depths, Temp)
     if NaN_interp:

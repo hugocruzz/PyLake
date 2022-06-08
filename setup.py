@@ -3,11 +3,11 @@ from setuptools import setup, find_packages
 with open('README.md') as f:
     README = f.read()
 
-VERSION = '0.0.8'
-DESCRIPTION = 'puchu'
+VERSION = '0.0.1'
+DESCRIPTION = 'pylake'
 
 setup(
-    name="puchu",
+    name="pylake",
     version=VERSION,
     author="Hugo Cruz",
     author_email="<huggcruzz@gmail.com>",
@@ -15,7 +15,7 @@ setup(
     long_description=README,
     long_description_content_type='text/markdown',
     packages=find_packages(),
-    url='https://github.com/hugocruzz/puchu',
+    url='https://github.com/hugocruzz/pylake',
     install_requires=[
         'numpy>=1.19.5',
         'pandas>=1.1.5',
@@ -26,5 +26,5 @@ setup(
         'seawater>=3.3.4'
     ],
     license="MIT",
-    keywords=['python', 'puchu', 'Lake analyzer', 'environmental data', 'Physical properties'],
+    keywords=['python', 'pylake', 'Lake analyzer', 'environmental data', 'Physical properties'],
 )

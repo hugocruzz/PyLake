@@ -1,5 +1,5 @@
 build
 dist
-puchu.egg-info
+pylake.egg-info
 .idea
-puchu/__pycache__
+pylake/__pycache__
