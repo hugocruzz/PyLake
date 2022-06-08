@@ -1,4 +1,4 @@
-# Puchu
+# PyLake
 
 This work present methods used to compute meaningful physical properties in aquatic sciences.
 
