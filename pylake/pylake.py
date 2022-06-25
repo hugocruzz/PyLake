@@ -6,15 +6,33 @@ import warnings
 from scipy.signal import find_peaks,savgol_filter
 import xarray as xr
 
+
+    
 def thermocline(Temp, depths, Smin=0.1, seasonal=True, mixed_cutoff=1, s=0.2, smooth=False, index=False, gridded=False, seasonal_smoothed=False):
     '''
     Calculate depth of the thermocline from a temperature profile.
- 
-    Description: This function calculates the location of the thermocline from a temperature
-    profile.
-    The seasonal thermocline is calculated using the maximum gradient of density.
-    If the seasonal parameter is set to false, it uses the find_peaks from scipy to find 
-    local maximum (higher than a certain threshold, based on Smin).
+
+    Method
+    ----------
+    Thermocline
+    The diurnal thermocline is calculated using the maximum gradient of density.
+    If the temperature profile have a variability in depth resolution, it is recommended 
+    to smooth the profile to avoid resolution influence on the algorithm.
+    Once the maximum gradient of density is found, a special technique to refine the 
+    thermocline depth is used and presented in (Read et al., 2011).
+
+    Seasonal thermocline
+    The seasonal thermocline uses the find_peaks from scipy to find the first 
+    local maximum (higher than a certain threshold, based on Smin) starting 
+    from the bottom of the profile.
+    By default, if no peak is found, the seasonal thermocline is set equal to 
+    the diurnal thermocline. 
+    The same refining technique is used.
+    A savgol filter (special moving averaged filter) is used to smooth the data 
+    and discard extremums.
+    The seasonal is set to be more or equal to the diurnal thermocline.
+    Keep in mind that if the seasonal thermocline is often assimilated 
+    with the diurnal, with the exception that the seasonal is artificially smoothed.
 
     Parameters
     ----------
@@ -42,7 +60,7 @@ def thermocline(Temp, depths, Smin=0.1, seasonal=True, mixed_cutoff=1, s=0.2, sm
         thermo.depth and meta.depths are not calculated (NaN is returned). Defaults
         to 1 deg C.
     smooth : bool, default: False
-        Smooth the curve following the scipy savgol filter (window size: 1/5 of the 
+        Smooth the curve following the scipy savgol filter (window size: 1/10 of the 
         depths length, order:3, method=nearest)
         Smoothing is recommended when the thermocline is located at a lower resolution 
         sensors (sensors are more spaced at the thermocline)
@@ -55,36 +73,21 @@ def thermocline(Temp, depths, Smin=0.1, seasonal=True, mixed_cutoff=1, s=0.2, sm
 
     Returns 
     ----------
-
-    if seasonal=False :
-        A dictionary containing:
-            thermocline : array_like: 
-                Depth of thermocline. If no thermocline found, value is NaN.
-            if index=True
-                thermocline_index: array_like
-                    the index of the thermocline corresponding to the depths input
-    if seasonal=True:
-        A dictionary containing:
-            seasonal Thermocline : array_like
-                Depth of seasonal thermocline. If no thermocline found, value is NaN.
-            if index=True
-                seasonal_Thermocline_index : array_like
-                    the index of the thermocline corresponding to the depths input
-            thermocline : array_like
-                Depth of thermocline. If no thermocline found, value is NaN.
-            if index=True
-                thermocline_index : array_like
-                    the index of the thermocline corresponding to the depths input
+    thermoD: array_like
+        thermocline depth (m)
+    thermoInd: array_like
+        thermocline index corresponding to the thermocline depth
     
     Examples
     ----------
-    >>>     temp = np.array([14.3,14,12.1,10,9.7,9.5,5,4.5,4.4,4.3])
+    >>>     import pylake
+    ...     temp = np.array([14.3,14,12.1,10,9.7,9.5,5,4.5,4.4,4.3])
     ...     depth = np.array([1,2,3,4,5,6,7,8,9,10])
-    ...     lw.thermocline(temp,depth)
-    ...     {'thermocline': array([2.75758114]), 'seasonal_thermocline': array([2.75758114])}
-
-    Limits: 
-    Use the temperature gradient instead of the depth gradient 
+    ...     thermo, thermoInd = pylake.thermocline(temp,depth)
+    ...     print(f"thermocline depth: {thermo}\n")
+    ...     print(f"thermocline depth index: {thermoInd}\n")
+    ...     thermocline depth: 2.878790569183019
+    ...     thermocline depth index: 2
     '''
     Temp = format_Temp(depths, Temp)
 
@@ -106,76 +109,130 @@ def thermocline(Temp, depths, Smin=0.1, seasonal=True, mixed_cutoff=1, s=0.2, sm
         warnings.warn(f"Temperature difference within the profile is too low to detect any thermocline for {cutoff_nb} profiles")
 
     if smooth:
-        if type(smooth)==dict:
-            window_size = smooth.get("window_size",round_up_to_odd(len(depths)/10))
-            mode = smooth.get("method",'nearest')
-            order = smooth.get("order",3)
-        else:
-            window_size= round_up_to_odd(len(depths)/10)
-            mode = 'nearest'
-            order = 3
-        new_Temp = savgol_filter(Temp, window_size, order, mode=mode)
-        old_Temp = Temp.copy()
-        Temp=new_Temp
-
+        Temp = smooth_temp(Temp, depths, smooth)
+    
     rhoVar = sw.dens0(s=s,t=Temp)
-    dRhoPerc = 0.15
-
     drho_dz=np.diff(rhoVar)/np.diff(depths)
-    depth_dz = np.array([(a+b)/2 for a,b in zip(depths, depths[1:])]) 
-    mDrhoZ = np.nanmax(drho_dz,axis=1)
-    thermoInd_dz = np.nanargmax(drho_dz, axis=1)
-    thermoD = depth_dz[thermoInd_dz]
+    
+    thermoInd = np.nanargmax(drho_dz, axis=1)
 
-    thermoD = refine_scale(depth_dz, drho_dz, thermoInd_dz, thermoD.copy())
-    thermoInd = find_nearest_index(depth_dz,thermoD)
+    thermoD = weighted_method(depths, rhoVar, thermoInd)
+    thermoInd = find_nearest_index(depths, thermoD)
+
     thermoD[cutoff_time_index] = np.nan
+    if len(thermoD)==1:
+        thermoD = np.asscalar(thermoD)
+        thermoInd = np.asscalar(thermoInd)
+    return thermoD, thermoInd
 
-    if not seasonal:
-        if gridded:
-            thermoD = find_nearest(depths,thermoD)
-        if index:
-            out_dict = {'thermocline_index':thermoInd, 'thermocline':thermoD}
-            return out_dict
-        out_dict = {'thermocline':thermoD}
-        return out_dict
-    else: 
-        dRhoCut=Smin*np.ones(Temp.shape[0])
-        #np.nanmax([dRhoPerc*mDrhoZ,Smin*np.ones(Temp.shape[0])], axis=0)
-        SthermoD = thermoD.copy()
-        SthermoInd_dz = thermoInd_dz.copy()
+def seasonal_thermocline(Temp, depths, s=0.2, Smin=0.1, seasonal_smoothed=True, smooth=False, mixed_cutoff=1):
+    '''
+    Calculate depth of the thermocline from a temperature profile.
+    
+    Method
+    ---------
+    The seasonal thermocline uses the find_peaks from scipy to find the first 
+    local maximum (higher than a certain threshold, based on Smin) starting 
+    from the bottom of the profile.
+    By default, if no peak is found, the seasonal thermocline is set equal to 
+    the diurnal thermocline. 
+    The same refining technique is used.
+    A savgol filter (special moving averaged filter) is used to smooth the data 
+    and discard extremums.
+    The seasonal is set to be more or equal to the diurnal thermocline.
+    Keep in mind that if the seasonal thermocline is often assimilated 
+    with the diurnal, with the exception that the seasonal is artificially smoothed.
 
-        for i in range(0,drho_dz.shape[0]):
-            locs, peaks=find_peaks(drho_dz[i,:],height=dRhoCut[i])
-            pks = peaks["peak_heights"]
-            if len(pks)!=0:
-                mDrhoZ[i] = pks[-1]
-                SthermoInd_dz[i] = locs[-1]
-        SthermoD = refine_scale(depth_dz, drho_dz, SthermoInd_dz, SthermoD.copy())
+    Parameters
+    ----------
+    Temp :  array_like
+        a numeric vector of water temperature in degrees C
+    depths : array_like
+        a numeric vector corresponding to the depths (in m) of the Temp
+    s : array_like, default : 0.2
+        Salinity of the water column in PSU
+    Smin : float, default: 0.1 °C/m
+        Optional parameter defining minimum density gradient for
+        thermocline.
+    smooth : bool, default: False
+        Smooth the curve following the scipy savgol filter (window size: 1/10 of the 
+        depths length, order:3, method=nearest)
+        Smoothing is recommended when the thermocline is located at a lower resolution 
+        sensors (sensors are more spaced at the thermocline)
+    seasonal_smoothed: bool, default: True
+        Smooth the seasonal thermocline on the entire time serie. The smooth depends on the time serie length.
+    mixed_cutoff : scalar, default: 1 °C
+        A cutoff (deg C) where below this threshold,
+        thermocline are not calculated (NaN is returned).
+    Returns 
+    ----------
+    thermoD: array_like
+        thermocline depth (m)
+    thermoInd: array_like
+        thermocline index corresponding to the thermocline depth
+    
+    Examples
+    ----------
+    >>>     import pylake
+    ...     temp = np.array([14.3,14,12.1,10,9.7,9.5,5,4.5,4.4,4.3])
+    ...     depth = np.array([1,2,3,4,5,6,7,8,9,10])
+    ...     Sthermo, SthermoInd = pylake.seasonal_thermocline(temp,depth)
+    ...     print(f"Seasonal thermocline depth: {Sthermo}\n")
+    ...     print(f"Seasonal thermocline depth index: {SthermoInd}\n")
+    ...     Seasonal thermocline depth: 6.4880232728589355 
+    ...     Seasonal thermocline depth index: 5
+    '''
+    Temp = format_Temp(depths, Temp)
+    
+    rhoVar = sw.dens0(s=s,t=Temp)
+    drho_dz=np.diff(rhoVar)/np.diff(depths)
+    mDrhoZ = np.nanmax(drho_dz,axis=1)
+    dRhoCut = Smin*np.ones(Temp.shape[0])
 
-        idxthermoD = np.where(SthermoD<thermoD)[0]
-        SthermoD[idxthermoD]=thermoD[idxthermoD]
-        SthermoInd_dz[idxthermoD]=thermoInd[idxthermoD]
-        
-        SthermoInd = find_nearest_index(depth_dz,SthermoD)
-        SthermoD[cutoff_time_index] = np.nan 
-        
+    thermoD, thermoInd = thermocline(Temp, depths, smooth=smooth, mixed_cutoff=mixed_cutoff)
+    #format if it's a scalar
+    thermoD, thermoInd = list(map(np.asanyarray, (thermoD, thermoInd)))
+    thermoD = thermoD.reshape(-1)
+    thermoInd = thermoInd.reshape(-1)
+
+    SthermoD = thermoD.copy()
+    SthermoInd = thermoInd.copy()
+
+    #Define seasonal thermocline based on the first peak starting from the bottom of the water column
+    for i in range(0,drho_dz.shape[0]):
+        locs, peaks = find_peaks(drho_dz[i,:],height=dRhoCut[i])
+        pks = peaks["peak_heights"]
+        if len(pks)!=0:
+            mDrhoZ[i] = pks[-1]
+            SthermoInd[i] = locs[-1]
+
+    SthermoD = weighted_method(depths, rhoVar, SthermoInd)
+
+    #Compare the seasonal and the diurnal thermocline, seasonal should be at higher depth than the diurnal, if not, both are set equal.
+    idxthermoD = np.where(SthermoD<thermoD)[0]
+    SthermoD[idxthermoD] = thermoD[idxthermoD]
+    SthermoInd[idxthermoD] = thermoInd[idxthermoD]
+    
+    SthermoInd = find_nearest_index(depths,SthermoD)
+
+    if len(thermoD)!=1:
         if seasonal_smoothed:
-            SthermoD = savgol_filter(SthermoD, round_up_to_odd(len(SthermoD)/10), 3)
-        if gridded:
-            SthermoD = find_nearest(depths,SthermoD)
-            thermoD = find_nearest(depths,thermoD)
-        if index:
-            return {'seasonal_thermocline_index':SthermoInd, 'seasonal_thermocline':SthermoD, 'thermocline_index':thermoInd, 'thermocline':thermoD}
-        return {'thermocline':thermoD, 'seasonal_thermocline':SthermoD}
+            SthermoD = savgol_filter(SthermoD, round_up_to_odd(len(SthermoD)/30), 3, mode='nearest')
+    else:
+        SthermoD = np.asscalar(SthermoD)
+        SthermoInd = np.asscalar(SthermoInd)
+    return SthermoD, SthermoInd
 
 
-def meta_depths(Temp, depths, slope=0.1, seasonal=False, mixed_cutoff=1, smooth=False, s=0.2, thermocline_output=False):
+def meta_depths(Temp, depths, slope=0.1, seasonal=False, mixed_cutoff=1, smooth=False, s=0.2):
     '''
     Calculates the top and bottom depths of the metalimnion in a stratified
     lake. The metalimnion is defined as the water stratum in a stratified lake
     with the steepest thermal gradient and is demarcated by the bottom of the
     epilimnion and top of the hypolimnion.
+    
+    Method
+    ----------
     
     Parameters
     ----------
@@ -184,8 +241,9 @@ def meta_depths(Temp, depths, slope=0.1, seasonal=False, mixed_cutoff=1, smooth=
     depths : array_like
         a numeric vector corresponding to the depths (in m) of the Temp
         measurements
-    slope : scalar, default: 0.1
-        a numeric vector corresponding to the minimum slope
+    slope : scalar, str, default: 0.1
+        a numeric vector corresponding to the minimum slope. Can be set to "relative", if it's the case,
+        the threshold will be 10% of the max slope density gradient.
     seasonal : bool, default: False
         Calculates the metalimnion based on the seasonal thermocline if set to True.
     mixed_cutoff : scalar, default: 1
@@ -213,13 +271,14 @@ def meta_depths(Temp, depths, slope=0.1, seasonal=False, mixed_cutoff=1, smooth=
 
     Examples
     ----------
-    >>>     temp = np.array([14.3,14,12.1,10,9.7,9.5])
+    >>>     import pylake
+    ...     temp = np.array([14.3,14,12.1,10,9.7,9.5])
     ...     depth = np.array([1,2,3,4,5,6])
-    ...     meta_depths(temp, depth, thermocline_output=True)
-    {'thermocline': array([3], dtype=int64), 'top_metalimnion': array([2.]), 'bot_metalimnion': array([4.])}
+    ...     pylake.meta_depths(temp, depth, thermocline_output=True)
+    {'thermocline': array([3], dtype=int64), 'top_metalimnion': array([1.5]), 'bot_metalimnion': array([4.5])}
 
     >>> lw.meta_depths(temp,depth, thermocline_output=True, smooth={"window_size":5, "mode":"nearest", "order":3})
-    {'thermocline': array([3], dtype=int64), 'top_metalimnion': array([2.]), 'bot_metalimnion': array([4.])}
+    {'thermocline': array([3], dtype=int64), 'top_metalimnion': array([1.5]), 'bot_metalimnion': array([4.5])}
 
     >>> lw.meta_depths(temp,depth, mixed_cutoff=10, thermocline_output=True)
     {'thermocline': array([nan]), 'top_metalimnion': array([nan]), 'bot_metalimnion': array([nan])}
@@ -227,7 +286,6 @@ def meta_depths(Temp, depths, slope=0.1, seasonal=False, mixed_cutoff=1, smooth=
 
     References
     ----------
-    LakeAnalyzer in R
     Wetzel, R. G. 2001. Limnology: Lake and River Ecosystems, 3rd ed. Academic Press.'''
 
     #Ensure that we are interpreting the lines as time and columns as depths
@@ -244,61 +302,59 @@ def meta_depths(Temp, depths, slope=0.1, seasonal=False, mixed_cutoff=1, smooth=
         return np.nan
 
     if smooth:
-        if type(smooth)==dict:
-            window_size = smooth.get("window_size",round_up_to_odd(len(depths)/5))
-            mode = smooth.get("method",'nearest')
-            order = smooth.get("order",3)
-        else:
-            window_size= round_up_to_odd(len(depths)/5)
-            mode = 'nearest'
-            order = 3
-        new_Temp = savgol_filter(Temp, window_size, order, mode=mode)
-        old_Temp = Temp.copy()
-        Temp=new_Temp
+        Temp = smooth_temp(Temp, depths, smooth)
 
-    thermo = thermocline(Temp, depths, seasonal=seasonal, mixed_cutoff=mixed_cutoff, index=True, gridded=True)
     if seasonal:
-        thermoInd = thermo["seasonal_thermocline_index"]
-        thermoD = thermo["seasonal_thermocline"]
+        thermoD, thermoInd = seasonal_thermocline(Temp, depths, mixed_cutoff=mixed_cutoff, smooth=False)
     else:
-        thermoInd = thermo["thermocline_index"]
-        thermoD = thermo["thermocline"]
+        thermoD, thermoInd = thermocline(Temp, depths, mixed_cutoff=mixed_cutoff, smooth=False)
 
-    rhoVar = sw.dens0(s=s,t=Temp)
-    drho_dz=np.diff(rhoVar)/np.diff(depths)
-    numDepths=len(depths)
-    Tdepth = [(a+b)/2 for a,b in zip(depths, depths[1:])]
-    time_ind=np.arange(drho_dz.shape[0])
-    metaBot_depth = np.ones(time_ind.size)*np.nan
-    metaTop_depth = np.ones(time_ind.size)*np.nan
+    thermoD, thermoInd = list(map(np.asanyarray, (thermoD, thermoInd)))
+    thermoD = thermoD.reshape(-1)
+    thermoInd = thermoInd.reshape(-1)
 
-    for t in time_ind:
-        for depthInd in range(thermoInd[t],len(Tdepth)):
-            if not np.isnan(drho_dz[t,depthInd]) and (drho_dz[t,depthInd] < slope):
-                metaBot_depth[t]= Tdepth[depthInd]
-                break
+    if type(Temp)==np.ndarray:
+        Temp = format_Temp(depths, Temp)
+        coords = {'time':list(range(0,Temp.shape[0])),'depth':depths}
+        Temp = xr.DataArray(Temp, coords)
+        Temp["thermoInd"] = ('time', thermoInd)
+        Temp["thermoD"] = ('time', thermoD)
+    else:
+        Temp["thermoInd"] = ('time', thermoInd)
+        Temp["thermoD"] = ('time', thermoD)
 
-        if (depthInd-thermoInd[t]>=1)and(not np.isnan(drho_dz[t,depthInd]))and(drho_dz[t,depthInd]>slope):
-             metaBot_depth[t] = np.interp(slope, drho_dz[t,thermoInd:depthInd], Tdepth[thermoInd:depthInd])
+    rhoVar = dens0(s=s,t=Temp)
+    drho_dz = rhoVar.diff('depth')/rhoVar.depth.diff('depth')
+    drho_dz["depth"] = [(a+b)/2 for a,b in zip(depths, depths[1:])]
+    drho_dz["thermoInd"] = ('time', find_nearest_index(drho_dz["depth"].to_numpy(), drho_dz["thermoD"].to_numpy()))
+    mark =  drho_dz["depth"]-drho_dz["thermoD"]
 
+    if slope=="relative":
+        slope = drho_dz.max('depth')/10
+    
+    cond = drho_dz<slope
 
-        for depthInd in range(thermoInd[t], -1, -1):
-            if not np.isnan(drho_dz[t,depthInd]) and (drho_dz[t,depthInd] < slope):
-                metaTop_depth[t]=Tdepth[depthInd]
-                break
+    mark_value = mark.where(~cond)
+    e_mark = mark_value.where(mark_value<0)
+    h_mark = mark_value.where(mark_value>0)
+    
+    epilimnion_idx_no_nan = e_mark.fillna(-999).argmax(dim='depth')-1
+    epilimnion_idx = epilimnion_idx_no_nan.where(epilimnion_idx_no_nan!=-1,drho_dz["thermoInd"]) #If not found, make it equal to the thermoInd
+    hypolimnion_idx_no_nan = h_mark.fillna(999).argmin(dim='depth')+1
+    hypolimnion_idx = hypolimnion_idx_no_nan.where(hypolimnion_idx_no_nan!=1,drho_dz["thermoInd"])
 
-        if (thermoInd[t]-depthInd>=1)and(not np.isnan(drho_dz[t,depthInd]))and(drho_dz[t,depthInd]>slope):
-             metaTop_depth[t] = np.interp(slope, drho_dz[t,depthInd:thermoInd[t]], depths[depthInd:thermoInd[t]])
-            
-        if metaBot_depth[t]<thermoD[t]:
-            metaBot_depth[t]=thermoD[t]
-        if metaTop_depth[t]>thermoD[t]:
-            metaTop_depth[t]=thermoD[t]
-    metaBot_depth = set_nan(thermoD, metaBot_depth)
-    metaTop_depth = set_nan(thermoD, metaTop_depth)
-    if thermocline_output:
-        return {'thermocline':thermoD,'top_metalimnion':metaTop_depth, 'bot_metalimnion':metaBot_depth}
-    return {'top_metalimnion':metaTop_depth, 'bot_metalimnion':metaBot_depth}
+    hypo_depth = drho_dz["depth"].isel(depth=hypolimnion_idx)
+    hypo_plus = drho_dz["depth"].isel(depth=hypolimnion_idx+1)
+    epi_depth = drho_dz["depth"].isel(depth=epilimnion_idx)
+    epi_minus = drho_dz["depth"].isel(depth=epilimnion_idx-1)
+
+    averaged_epi = (epi_minus+epi_depth)/2
+    averaged_hypo = (hypo_plus+hypo_depth)/2
+
+    hypo_depth_filt = averaged_hypo.where(averaged_hypo>averaged_hypo["thermoD"],averaged_hypo["thermoD"])
+    epi_depth_filt = averaged_epi.where(averaged_epi<averaged_epi["thermoD"],averaged_epi["thermoD"])
+
+    return hypo_depth_filt.to_numpy(), epi_depth_filt.to_numpy()
     
 def wedderburn(delta_rho, metaT, uSt, AvHyp_rho, Lo=False, Ao=False, g=9.81):
     ''' 
@@ -335,13 +391,13 @@ def wedderburn(delta_rho, metaT, uSt, AvHyp_rho, Lo=False, Ao=False, g=9.81):
     
     Examples 
     ----------
-    >>> delta_rho = np.array([3.1,1.5])
+    >>>    delta_rho = np.array([3.1,1.5])
     ...    metaT = np.array([5.5,2.4])
     ...    uSt = np.array([0.0028,0.0032])
     ...    Ao = np.array([80300,120000])
     ...    AvHyp_rho = np.array([999.31,999.1])
-    ...    lw.wedderburn(delta_rho, metaT, uSt, Ao, AvHyp_rho)
-    array([1.46225878, 0.0690387 ])
+    ...    pylake.wedderburn(delta_rho, metaT, uSt, AvHyp_rho, Ao=Ao)
+    array([367.22052925  21.19474286])
 
     Equation
     ----------   
@@ -355,7 +411,8 @@ def wedderburn(delta_rho, metaT, uSt, AvHyp_rho, Lo=False, Ao=False, g=9.81):
 
     References
     ----------
-    LakeAnalyzer in R
+    Read, J.S. et al., 2011. Derivation of lake mixing and stratification indices from high-resolution lake
+    buoy data. Environ. Model. Software 26, 1325–1336. https://doi.org/10.1016/j.
     Imberger, J., Patterson, J.C., 1990. Physical limnology. Advances in Applied Mechanics 27, 353-370.
     '''
     #Must exist a better way to do this
@@ -412,7 +469,7 @@ def schmidt_stability(Temp, depths, bthA, bthD, sal = 0.2, g=9.81, dz=0.1, NaN_i
     ...    bthD	=	np.array([0,2.3,2.5,4.2,5.8,7]) 
     ...    wtr	=	np.array([28,27,26.4,26,25.4,24,23.3])
     ...    depths	=np.array([0,1,2,3,4,5,6])  
-    ...    lw.schmidt_stability(wtr, depths, bthA, bthD, sal=.2, g=self.g)
+    ...    pylake.schmidt_stability(wtr, depths, bthA, bthD, sal=.2, g=self.g)
     array([21.20261732])
 
     equation
@@ -722,7 +779,7 @@ def Average_layer_temp(Temp, depths, depth_ref, top=False, bot=False):
     mean_temp = masked_temp.mean(dim="depth")
     return mean_temp.to_numpy()
 
-def mixed_layer_depth(depths, Temp, threshold=0.1, method=None):
+def mixed_layer_depth(depths, Temp, threshold=0.2, method='interp'):
     '''
     Calculates the mixed layer depth by using the difference temperature method.
     The depth of the mixed layer is defined as the depth where the temperature difference with the temperature of the surface is greater than a threshold (default 0.1°C).
@@ -737,7 +794,9 @@ def mixed_layer_depth(depths, Temp, threshold=0.1, method=None):
         Temperature matrix (degrees)
     Threshold : scalar
         threshold for the mixing layer detection
-    
+    method: str, bool, default: interp
+        If set to interp, the dataset is rescaled with a smaller grid, and the data is therfore interpolated. 
+
     Returns
     -----------
     hML array_like
@@ -773,16 +832,19 @@ def mixed_layer_depth(depths, Temp, threshold=0.1, method=None):
     T_surf, nan_mask = nanTsurf(depths, Temp, T_surf, NaN_treshold=1)
         
     T_diff = T_surf-Temp.T-threshold
-    hML_idx = np.nanargmin(np.abs(T_diff), axis=0)
-    hML = depths[hML_idx]
-    hML[nan_mask] = np.nan
+
     if method=='interp':
-        #Finding the root for a ndarray is difficult. Another method might exist.
-        hML_refined = []
-        for t in range(0,Temp.shape[0]):
-            f = interp1d(depths, T_diff[:,t])
-            hML_refined=np.append(hML_refined,f(0))
-        hML=hML_refined
-    return hML
-
-
+        dz=0.1
+        T_diff = format_Temp(depths, T_diff)
+        coords = {'time':list(range(0,T_diff.shape[0])),'depth':depths}
+        ds = xr.DataArray(T_diff, coords)
+        depth_interp = np.arange(ds.depth.min(), ds.depth.max(), dz)
+        ds_interp = ds.interp(depth=depth_interp)
+        hML = abs(ds_interp).idxmin("depth")
+        hML[nan_mask] = np.nan
+        return hML.to_numpy()
+    else:
+        hML_idx = np.nanargmin(np.abs(ds), axis=0)
+        hML = depths[hML_idx]
+        hML[nan_mask] = np.nan
+        return hML

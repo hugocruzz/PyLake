@@ -1,5 +1,18 @@
 import numpy as np
 
+def smooth_temp(Temp, depths, smooth):
+    from scipy.signal import savgol_filter
+    if type(smooth)==dict:
+        window_size = smooth.get("window_size",round_up_to_odd(len(depths)/10))
+        mode = smooth.get("method",'nearest')
+        order = smooth.get("order",3)
+    else:
+        window_size= round_up_to_odd(len(depths)/10)
+        mode = 'nearest'
+        order = 3
+    new_Temp = savgol_filter(Temp, window_size, order, mode=mode)
+    return new_Temp
+
 def refine_scale(depths, drho_dz, thermoInd, thermoD):
     '''
     Estimate where the thermocline lies even between two temperature 
@@ -28,12 +41,14 @@ def refine_scale(depths, drho_dz, thermoInd, thermoD):
     remove_bot = np.where((thermoInd==depths.size-1))[0]
     thermoInd[remove_bot] = thermoInd[remove_bot]-1
 
-    thermoD_drho_dz = drho_dz[np.arange(drho_dz.shape[0]), thermoInd]
-    down_thermoD_drho_dz = drho_dz[np.arange(drho_dz.shape[0]), thermoInd+1]
-    up_thermoD_drho_dz = drho_dz[np.arange(drho_dz.shape[0]), thermoInd-1]
     D = depths[thermoInd]
     dnD = depths[thermoInd+1]
     upD = depths[thermoInd-1]
+
+    thermoD_drho_dz = drho_dz[np.arange(drho_dz.shape[0]), thermoInd]
+    down_thermoD_drho_dz = drho_dz[np.arange(drho_dz.shape[0]), thermoInd+1]
+    up_thermoD_drho_dz = drho_dz[np.arange(drho_dz.shape[0]), thermoInd-1]
+
     Sdn = -(dnD-D)/(down_thermoD_drho_dz-thermoD_drho_dz)
     Sup = (D-upD)/(thermoD_drho_dz-up_thermoD_drho_dz)
 
@@ -43,6 +58,62 @@ def refine_scale(depths, drho_dz, thermoInd, thermoD):
     new_thermoD = dnD*(Sdn/(Sdn+Sup))+D*(Sup/(Sdn+Sup))
     thermoD[mask] = new_thermoD[mask]
     return thermoD
+
+def weighted_method(depths, rho, z_idx):
+    '''
+    Estimate where the thermocline lies even between two temperature 
+    measurement depths, giving a potentially finer-scale estimate 
+    than usual techniques.
+
+    Parameters
+    -----------
+    depths: array_like
+        depth array
+    rho: array_like 
+        density array 
+    z_idx: array_like
+        thermocline index corresponding to the depths 
+
+    Returns
+    -----------
+    weighted_thermoD: array_like
+        the adjusted weighted thermocline depth.
+    '''
+    depths, rho, z_idx = list(map(np.asanyarray, (depths, rho, z_idx)))
+
+    drho_dz = np.diff(rho)/np.diff(depths)
+
+    #Mask boundarie values
+    mask_up = z_idx==0
+    mask_down = z_idx==(len(depths)-1)
+
+    #Change values for boundaries to avoid any bug on the indexation
+    z_masked = z_idx.copy()
+    z_masked[mask_up] = z_masked[mask_up]+1
+    z_masked[mask_down] = z_masked[mask_down]-1
+
+    #Weighted method 
+    hplus = (depths[z_masked]   - depths[z_masked+2])/2
+    hminu = (depths[z_masked-1] - depths[z_masked+1])/2
+
+    time = np.arange(drho_dz.shape[0])
+    drho = drho_dz[time, z_masked]
+    drho_plus = drho_dz[time, z_masked+1]
+    drho_minu = drho_dz[time, z_masked-1]
+
+    Dplus = hplus/(drho-drho_plus)
+    Dminu = hminu/(drho-drho_minu)
+
+    weighted_thermoD = depths[z_masked+1]*(Dplus/(Dminu+Dplus)) + depths[z_masked]*(Dminu/(Dminu+Dplus))
+    
+    mask_inf = (np.isinf(Dplus/(Dminu+Dplus))) & (np.isinf(Dminu/(Dminu+Dplus)))
+
+    #Restablish correct values for boundaries
+    weighted_thermoD[mask_up] = (depths[0]+depths[1])/2
+    weighted_thermoD[mask_down] = (depths[-1]+depths[-2])/2
+    weighted_thermoD[mask_inf] = np.nan
+
+    return weighted_thermoD
 
 def T68conv(T90):
     return T90 * 1.00024
