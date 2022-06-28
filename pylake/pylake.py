@@ -8,74 +8,45 @@ import xarray as xr
 
 
     
-def thermocline(Temp, depths, Smin=0.1, seasonal=True, mixed_cutoff=1, s=0.2, smooth=False, index=False, gridded=False, seasonal_smoothed=False):
+def thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, smooth=False):
     '''
-    Calculate depth of the thermocline from a temperature profile.
+    Calculate the thermocline depth from one or various temperature profiles.
+    It uses the method of the maximum gradient, the results can be interpreted
+    as a diurnal thermocline (see pylake.seasonal_thermocline for the seasonal).
 
     Method
     ----------
-    Thermocline
-    The diurnal thermocline is calculated using the maximum gradient of density.
+    The thermocline is calculated using the maximum gradient of density.
     If the temperature profile have a variability in depth resolution, it is recommended 
     to smooth the profile to avoid resolution influence on the algorithm.
     Once the maximum gradient of density is found, a special technique to refine the 
     thermocline depth is used and presented in (Read et al., 2011).
 
-    Seasonal thermocline
-    The seasonal thermocline uses the find_peaks from scipy to find the first 
-    local maximum (higher than a certain threshold, based on Smin) starting 
-    from the bottom of the profile.
-    By default, if no peak is found, the seasonal thermocline is set equal to 
-    the diurnal thermocline. 
-    The same refining technique is used.
-    A savgol filter (special moving averaged filter) is used to smooth the data 
-    and discard extremums.
-    The seasonal is set to be more or equal to the diurnal thermocline.
-    Keep in mind that if the seasonal thermocline is often assimilated 
-    with the diurnal, with the exception that the seasonal is artificially smoothed.
-
     Parameters
     ----------
     Temp :  array_like
         a numeric vector of water temperature in degrees C
-    depths : array_like
-        a numeric vector corresponding to the depths (in m) of the Temp
-    Smin : float, default: 0.1 °C/m
-        Optional parameter defining minimum density gradient for
-        thermocline. 
-    seasonal : bool, default: True
-        A logical value indicating whether the seasonal thermocline
-        should be returned. This is fed to thermo.depth, which is used as the
-        starting point.  The seasonal thermocline is defined as the deepest density
-        gradient found in the profile. If FALSE, the depth of the maximum
-        density gradient is used as the starting point. Defaults to True
-    index : bool, default: False
-        value indicated if index of the thermocline depth,
-        instead of the depth value, should be returned. Defaults to False
-        - cutoff (float) A cutoff (deg C) where below this threshold,
-        thermo.depth and meta.depths are not calculated (NaN is returned). Defaults
-        to 1 deg C.
-    mixed_cutoff : scalar, default: 1
-        A cutoff (deg C) where below this threshold,
-        thermo.depth and meta.depths are not calculated (NaN is returned). Defaults
-        to 1 deg C.
-    smooth : bool, default: False
-        Smooth the curve following the scipy savgol filter (window size: 1/10 of the 
-        depths length, order:3, method=nearest)
-        Smoothing is recommended when the thermocline is located at a lower resolution 
-        sensors (sensors are more spaced at the thermocline)
+    depth : array_like
+        a numeric vector corresponding to the depth (in m) of the Temp
     s : array_like, default : 0.2
         Salinity of the water column in PSU
-    gridded : bool, default: False
-        The calculated thermocline depth can be located between two depths.
-        If gridded=True, a simple algorithm would compare the thermocline depth with the 
-        depth vector given as input, and return the closest gridded depth.
+    Smin : float, default: 0.1 °C/m
+        Optional parameter defining minimum density gradient for
+        thermocline.
+    mixed_cutoff : scalar, default: 1
+        The difference between the maximum and minimum of the
+        temperature profile should be higher than this cutoff.
+    smooth : bool, default: False
+        Smooth the curve following the scipy savgol filter (window size: 1/10 of the 
+        depth length, order:3, method=nearest)
+        Smoothing is recommended when the thermocline is located at a lower resolution 
+        sensors (sensors are more spaced at the thermocline)
 
     Returns 
     ----------
-    thermoD: array_like
+    thermoD: array_like, scalar
         thermocline depth (m)
-    thermoInd: array_like
+    thermoInd: array_like, scalar
         thermocline index corresponding to the thermocline depth
     
     Examples
@@ -89,43 +60,42 @@ def thermocline(Temp, depths, Smin=0.1, seasonal=True, mixed_cutoff=1, s=0.2, sm
     ...     thermocline depth: 2.878790569183019
     ...     thermocline depth index: 2
     '''
-    Temp = format_Temp(depths, Temp)
 
-    if np.isnan(Temp).all():
-        warnings.warn("Could not deduce thermocline with only nan vector")
-        return depths*np.nan
-    if Temp.shape[1]<3:
-        warnings.warn("Could not deduce thermocline with less than 3 measurements")
-        return depths*np.nan
-    if len(depths)!=len(np.unique(depths)):
-        warnings.warn("depths must be unique")
-        return np.nan
+    Temp, depth = to_xarray(Temp, depth,time)
 
-    is_not_significant = np.nanmax(Temp,axis=1)-np.nanmin(Temp,axis=1)<mixed_cutoff
+    if np.isnan(control(Temp,depth)):
+        return Temp.time*np.nan
     
-    cutoff_time_index =  np.where(is_not_significant)[0]
-    if is_not_significant.any():
-        cutoff_nb = len(cutoff_time_index)
-        warnings.warn(f"Temperature difference within the profile is too low to detect any thermocline for {cutoff_nb} profiles")
-
+    is_not_significant = Temp.max('depth')-Temp.min('depth')<mixed_cutoff
     if smooth:
-        Temp = smooth_temp(Temp, depths, smooth)
-    
-    rhoVar = sw.dens0(s=s,t=Temp)
-    drho_dz=np.diff(rhoVar)/np.diff(depths)
-    
-    thermoInd = np.nanargmax(drho_dz, axis=1)
+        time = Temp.time
+        Temp = smooth_temp(Temp, depth, smooth)
+        Temp, depth = to_xarray(Temp, depth,time)
 
-    thermoD = weighted_method(depths, rhoVar, thermoInd)
-    thermoInd = find_nearest_index(depths, thermoD)
+    rhoVar = dens0(s=s,t=Temp)
+    drho_dz = rhoVar.diff('depth')/rhoVar.depth.diff('depth')
+    thermoInd = drho_dz.argmax('depth')
 
-    thermoD[cutoff_time_index] = np.nan
+    thermoD = weighted_method(depth, rhoVar, thermoInd)
+
+    thermoInd = abs(thermoD-Temp.depth).argmin('depth')
+
+    is_not_significant["time"] = thermoD.time
+    thermoD = thermoD.where(~is_not_significant, np.nan)
+    '''
+    Check not enabled, too much time to convert xr to np
+    NaN_profiles = np.isnan(thermoD).sum()
+    if NaN_profiles: 
+        warnings.warn(f"Temperature difference within the profile is too low to detect any thermocline for some profiles")
+    '''
     if len(thermoD)==1:
         thermoD = np.asscalar(thermoD)
         thermoInd = np.asscalar(thermoInd)
     return thermoD, thermoInd
 
-def seasonal_thermocline(Temp, depths, s=0.2, Smin=0.1, seasonal_smoothed=True, smooth=False, mixed_cutoff=1):
+
+
+def seasonal_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, Smin=0.1, seasonal_smoothed=True, smooth=False):
     '''
     Calculate depth of the thermocline from a temperature profile.
     
@@ -147,23 +117,24 @@ def seasonal_thermocline(Temp, depths, s=0.2, Smin=0.1, seasonal_smoothed=True, 
     ----------
     Temp :  array_like
         a numeric vector of water temperature in degrees C
-    depths : array_like
-        a numeric vector corresponding to the depths (in m) of the Temp
+    depth : array_like
+        a numeric vector corresponding to the depth of the temperature.
+        Depth is defined as positive, and is minimum at the surface. 
     s : array_like, default : 0.2
         Salinity of the water column in PSU
+    mixed_cutoff : scalar, default: 1
+        The difference between the maximum and minimum of the
+        temperature profile should be higher than this cutoff.
     Smin : float, default: 0.1 °C/m
         Optional parameter defining minimum density gradient for
-        thermocline.
-    smooth : bool, default: False
-        Smooth the curve following the scipy savgol filter (window size: 1/10 of the 
-        depths length, order:3, method=nearest)
-        Smoothing is recommended when the thermocline is located at a lower resolution 
-        sensors (sensors are more spaced at the thermocline)
+        thermocline. Threshold for the peak height of the scipy.signal.find_peaks(...).
     seasonal_smoothed: bool, default: True
         Smooth the seasonal thermocline on the entire time serie. The smooth depends on the time serie length.
-    mixed_cutoff : scalar, default: 1 °C
-        A cutoff (deg C) where below this threshold,
-        thermocline are not calculated (NaN is returned).
+    smooth : bool, default: False
+        Smooth the curve following the scipy savgol filter (window size: 1/10 of the 
+        depth length, order:3, method=nearest)
+        Smoothing is recommended when the thermocline is located at a lower resolution 
+        sensors (sensors can be more spaced at the thermocline, resulting in a bias).
     Returns 
     ----------
     thermoD: array_like
@@ -182,51 +153,58 @@ def seasonal_thermocline(Temp, depths, s=0.2, Smin=0.1, seasonal_smoothed=True, 
     ...     Seasonal thermocline depth: 6.4880232728589355 
     ...     Seasonal thermocline depth index: 5
     '''
-    Temp = format_Temp(depths, Temp)
-    
-    rhoVar = sw.dens0(s=s,t=Temp)
-    drho_dz=np.diff(rhoVar)/np.diff(depths)
-    mDrhoZ = np.nanmax(drho_dz,axis=1)
+
+    Temp, depth = to_xarray(Temp, depth, time)
+    time = Temp.time
+    rhoVar = dens0(s=s,t=Temp)
+    drho_dz = rhoVar.diff('depth')/rhoVar.depth.diff('depth')
+    mDrhoZ = drho_dz.max('depth')
+
     dRhoCut = Smin*np.ones(Temp.shape[0])
+    drho_dz["drhocut"] = ('time', dRhoCut)
 
-    thermoD, thermoInd = thermocline(Temp, depths, smooth=smooth, mixed_cutoff=mixed_cutoff)
-    #format if it's a scalar
-    thermoD, thermoInd = list(map(np.asanyarray, (thermoD, thermoInd)))
-    thermoD = thermoD.reshape(-1)
-    thermoInd = thermoInd.reshape(-1)
+    thermoD, thermoInd = thermocline(Temp, depth, smooth=smooth, mixed_cutoff=mixed_cutoff)        
 
-    SthermoD = thermoD.copy()
-    SthermoInd = thermoInd.copy()
+    def process_peaks(arr, Smin):
+        arr = arr.copy()
+        locs, peaks = find_peaks(arr, height=Smin)
+        if len(locs):
+            SthermoInd = locs[-1].astype(int)
+        else:
+            SthermoInd = np.nan
+        return SthermoInd
 
-    #Define seasonal thermocline based on the first peak starting from the bottom of the water column
-    for i in range(0,drho_dz.shape[0]):
-        locs, peaks = find_peaks(drho_dz[i,:],height=dRhoCut[i])
-        pks = peaks["peak_heights"]
-        if len(pks)!=0:
-            mDrhoZ[i] = pks[-1]
-            SthermoInd[i] = locs[-1]
+    SthermoInd = xr.apply_ufunc(process_peaks, drho_dz, Smin, input_core_dims=[['depth'],[]],output_core_dims=[[]], vectorize=True)
 
-    SthermoD = weighted_method(depths, rhoVar, SthermoInd)
+    #If no peak is found, set SthermoInd to thermoInd
+    NaN_mask = np.isnan(SthermoInd)
+    thermoInd["time"]=NaN_mask.time
+    thermoInd["time"]=SthermoInd.time
+    SthermoInd = SthermoInd.where(~NaN_mask, thermoInd)
+    SthermoInd = SthermoInd.astype(int)
+
+    SthermoD = weighted_method(depth, rhoVar, SthermoInd)
 
     #Compare the seasonal and the diurnal thermocline, seasonal should be at higher depth than the diurnal, if not, both are set equal.
-    idxthermoD = np.where(SthermoD<thermoD)[0]
-    SthermoD[idxthermoD] = thermoD[idxthermoD]
-    SthermoInd[idxthermoD] = thermoInd[idxthermoD]
-    
-    SthermoInd = find_nearest_index(depths,SthermoD)
+    mask = (SthermoD<thermoD)
+    SthermoD = SthermoD.where(~mask, thermoD)
+    SthermoInd = SthermoInd.where(~mask, thermoInd)
+
+    SthermoInd = abs(SthermoD-Temp.depth).argmin('depth')
 
     if len(thermoD)!=1:
         if seasonal_smoothed:
             SthermoD = savgol_filter(SthermoD, round_up_to_odd(len(SthermoD)/30), 3, mode='nearest')
+            SthermoD = xr.DataArray(SthermoD, coords={'time':time})
     else:
         SthermoD = np.asscalar(SthermoD)
         SthermoInd = np.asscalar(SthermoInd)
     return SthermoD, SthermoInd
 
 
-def meta_depths(Temp, depths, slope=0.1, seasonal=False, mixed_cutoff=1, smooth=False, s=0.2):
+def metalimnion(Temp, depth=False, slope=0.1, seasonal=False, mixed_cutoff=1, smooth=False, s=0.2):
     '''
-    Calculates the top and bottom depths of the metalimnion in a stratified
+    Calculates the top and bottom depth of the metalimnion in a stratified
     lake. The metalimnion is defined as the water stratum in a stratified lake
     with the steepest thermal gradient and is demarcated by the bottom of the
     epilimnion and top of the hypolimnion.
@@ -238,20 +216,20 @@ def meta_depths(Temp, depths, slope=0.1, seasonal=False, mixed_cutoff=1, smooth=
     ----------
     Temp :  array_like
         a numeric vector of water temperature in degrees C
-    depths : array_like
-        a numeric vector corresponding to the depths (in m) of the Temp
-        measurements
+    depth : array_like
+        a numeric vector corresponding to the depth (in m) of the Temp
+        measurements. Depth is defined as positive, and is minimum at the surface. 
     slope : scalar, str, default: 0.1
         a numeric vector corresponding to the minimum slope. Can be set to "relative", if it's the case,
         the threshold will be 10% of the max slope density gradient.
     seasonal : bool, default: False
         Calculates the metalimnion based on the seasonal thermocline if set to True.
     mixed_cutoff : scalar, default: 1
-        A cutoff (deg C) where below this threshold, thermo.depth and meta.depths are 
+        A cutoff (deg C) where below this threshold, thermo.depth and meta.depth are 
         not calculated (NaN is returned). Defaults to 1 deg C.
     smooth : bool, default: False
         Smooth the curve following the scipy savgol filter (window size: 1/5 of the 
-        depths length, order:3, method=nearest)
+        depth length, order:3, method=nearest)
         Smoothing is recommended when the thermocline is located at a lower resolution 
         sensors (sensors are more spaced at the thermocline)
     s : array_like, default : 0.2
@@ -261,101 +239,121 @@ def meta_depths(Temp, depths, slope=0.1, seasonal=False, mixed_cutoff=1, smooth=
 
     Returns 
     ----------
-    metatop : array_like
-        A numeric vector of the top and bottom metalimnion depths in meters.
-        Returns the bottom depth if no distinct metalimion top and bottom found.
+    epilimnion : array_like, scalar
+        A numeric vector of the epilimnion depth.
+        Returns the thermocline depth if no epilimnion depth is found
+    hypolimnion : array_like, scalar
+        A numeric vector of the hypolimnion depth.
+        Returns the thermocline depth if no hypolimnion depth is found
     
     See also
     ----------
-    lakewater.thermocline
+    pylake.thermocline
 
     Examples
     ----------
     >>>     import pylake
     ...     temp = np.array([14.3,14,12.1,10,9.7,9.5])
     ...     depth = np.array([1,2,3,4,5,6])
-    ...     pylake.meta_depths(temp, depth, thermocline_output=True)
-    {'thermocline': array([3], dtype=int64), 'top_metalimnion': array([1.5]), 'bot_metalimnion': array([4.5])}
-
-    >>> lw.meta_depths(temp,depth, thermocline_output=True, smooth={"window_size":5, "mode":"nearest", "order":3})
-    {'thermocline': array([3], dtype=int64), 'top_metalimnion': array([1.5]), 'bot_metalimnion': array([4.5])}
-
-    >>> lw.meta_depths(temp,depth, mixed_cutoff=10, thermocline_output=True)
-    {'thermocline': array([nan]), 'top_metalimnion': array([nan]), 'bot_metalimnion': array([nan])}
-
+    ...     epilimnion, hypolimnion = pylake.metalimnion(temp, depth)
+    ...     print(f"Epilimnion: {epilimnion} \n Hypolimnion: {hypolimnion}.")
+    Epilimnion: 1.5
+    Hypolimnion: 4.5
 
     References
     ----------
     Wetzel, R. G. 2001. Limnology: Lake and River Ecosystems, 3rd ed. Academic Press.'''
 
-    #Ensure that we are interpreting the lines as time and columns as depths
-    Temp = format_Temp(depths, Temp)
-
-    if np.isnan(Temp).all():
-        warnings.warn("Could not deduce thermocline with only nan vector")
-        return depths*np.nan
-    if Temp.shape[1]<3:
-        warnings.warn("Could not deduce thermocline with less than 3 measurements")
-        return depths*np.nan
-    if len(depths)!=len(np.unique(depths)):
-        warnings.warn("depths must be unique")
-        return np.nan
-
+    Temp, depth = to_xarray(Temp, depth)
+    
     if smooth:
-        Temp = smooth_temp(Temp, depths, smooth)
+        time = Temp.time
+        Temp = smooth_temp(Temp, depth, smooth)
+        Temp, depth = to_xarray(Temp, depth, time)
 
     if seasonal:
-        thermoD, thermoInd = seasonal_thermocline(Temp, depths, mixed_cutoff=mixed_cutoff, smooth=False)
+        thermoD, thermoInd = seasonal_thermocline(Temp, depth, mixed_cutoff=mixed_cutoff, smooth=False)
     else:
-        thermoD, thermoInd = thermocline(Temp, depths, mixed_cutoff=mixed_cutoff, smooth=False)
+        thermoD, thermoInd = thermocline(Temp, depth, mixed_cutoff=mixed_cutoff, smooth=False)
+
 
     thermoD, thermoInd = list(map(np.asanyarray, (thermoD, thermoInd)))
     thermoD = thermoD.reshape(-1)
     thermoInd = thermoInd.reshape(-1)
-
-    if type(Temp)==np.ndarray:
-        Temp = format_Temp(depths, Temp)
-        coords = {'time':list(range(0,Temp.shape[0])),'depth':depths}
-        Temp = xr.DataArray(Temp, coords)
-        Temp["thermoInd"] = ('time', thermoInd)
-        Temp["thermoD"] = ('time', thermoD)
-    else:
-        Temp["thermoInd"] = ('time', thermoInd)
-        Temp["thermoD"] = ('time', thermoD)
+    Temp["thermoInd"] = ('time', thermoInd)
+    Temp["thermoD"] = ('time', thermoD)
 
     rhoVar = dens0(s=s,t=Temp)
     drho_dz = rhoVar.diff('depth')/rhoVar.depth.diff('depth')
-    drho_dz["depth"] = [(a+b)/2 for a,b in zip(depths, depths[1:])]
+    drho_dz["depth"] = [(a+b)/2 for a,b in zip(depth, depth[1:])]
     drho_dz["thermoInd"] = ('time', find_nearest_index(drho_dz["depth"].to_numpy(), drho_dz["thermoD"].to_numpy()))
     mark =  drho_dz["depth"]-drho_dz["thermoD"]
 
     if slope=="relative":
         slope = drho_dz.max('depth')/10
-    
+
     cond = drho_dz<slope
 
     mark_value = mark.where(~cond)
     e_mark = mark_value.where(mark_value<0)
     h_mark = mark_value.where(mark_value>0)
     
-    epilimnion_idx_no_nan = e_mark.fillna(-999).argmax(dim='depth')-1
+    epilimnion_idx_no_nan = e_mark.fillna(-999).argmax(dim='depth')
     epilimnion_idx = epilimnion_idx_no_nan.where(epilimnion_idx_no_nan!=-1,drho_dz["thermoInd"]) #If not found, make it equal to the thermoInd
-    hypolimnion_idx_no_nan = h_mark.fillna(999).argmin(dim='depth')+1
+    hypolimnion_idx_no_nan = h_mark.fillna(999).argmin(dim='depth')
     hypolimnion_idx = hypolimnion_idx_no_nan.where(hypolimnion_idx_no_nan!=1,drho_dz["thermoInd"])
 
     hypo_depth = drho_dz["depth"].isel(depth=hypolimnion_idx)
-    hypo_plus = drho_dz["depth"].isel(depth=hypolimnion_idx+1)
     epi_depth = drho_dz["depth"].isel(depth=epilimnion_idx)
-    epi_minus = drho_dz["depth"].isel(depth=epilimnion_idx-1)
 
-    averaged_epi = (epi_minus+epi_depth)/2
-    averaged_hypo = (hypo_plus+hypo_depth)/2
+    hypo_depth_filt = hypo_depth.where(hypo_depth>hypo_depth["thermoD"],hypo_depth["thermoD"])
+    epi_depth_filt = epi_depth.where(epi_depth<epi_depth["thermoD"],epi_depth["thermoD"])
 
-    hypo_depth_filt = averaged_hypo.where(averaged_hypo>averaged_hypo["thermoD"],averaged_hypo["thermoD"])
-    epi_depth_filt = averaged_epi.where(averaged_epi<averaged_epi["thermoD"],averaged_epi["thermoD"])
+    return epi_depth_filt, hypo_depth_filt
 
-    return hypo_depth_filt.to_numpy(), epi_depth_filt.to_numpy()
+def mixed_layer(Temp, depth=None, threshold=0.2):
+    '''
+    Calculates the mixed layer depth by using the difference temperature method.
+    The depth of the mixed layer is defined as the depth where the temperature difference with the temperature of the surface is greater than a threshold (default 0.1°C).
+    The algorithm does the difference of temperature from the surface to the bottom, reaching lower depth until it reaches a temperature difference lower than the threshold.
+    Surface Temperature might have NaNs. If it's the case, we take a deeper sensor (not more than 1m)
+
+    Parameters
+    -----------
+    depth : array_like 
+        depth vector (m)
+    Temp : array_like
+        Temperature matrix (degrees)
+    Threshold : scalar
+        threshold for the mixing layer detection
+
+    Returns
+    -----------
+    hML array_like
+        Mixed layer depth (m)
     
+    Example
+    ----------
+    >>>    wtr = np.array([22.51, 22.42, 22.4, 22.4, 22.4, 22.36, 22.3, 22.21, 22.11, 21.23, 16.42,15.15, 14.24, 13.35, 10.94, 10.43, 10.36, 9.94, 9.45, 9.1, 8.91, 8.58, 8.43])
+    ...    depth = np.array([0, 0.5, 1, 1.5, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20])
+    ...    pylake.mixed_layer(depth, wtr, threshold=0.1)
+    ...    1
+    '''
+    Temp, depth = to_xarray(Temp, depth)
+
+    T_surf = Temp.isel(depth=0)
+
+    #If surface sensor is NaN, check the second. Can be iterated until a certain depth.
+    NaN = np.where(np.isnan(T_surf))[0]
+    T_surf[NaN] = Temp.isel(time=NaN, depth=1)
+    
+    T_diff = T_surf-Temp.T-threshold
+
+    hML_idx = T_diff.argmin('depth')
+    hML = Temp.depth.isel(depth=hML_idx)
+
+    return hML
+
 def wedderburn(delta_rho, metaT, uSt, AvHyp_rho, Lo=False, Ao=False, g=9.81):
     ''' 
     Wedderburn Number (Wn) is a dimensionless parameter measuring the balance
@@ -433,9 +431,9 @@ def wedderburn(delta_rho, metaT, uSt, AvHyp_rho, Lo=False, Ao=False, g=9.81):
 
     go = g*delta_rho/AvHyp_rho
     W = go*metaT**2/(uSt**2*Lo)
-    return W
+    return W 
 
-def schmidt_stability(Temp, depths, bthA, bthD, sal = 0.2, g=9.81, dz=0.1, NaN_interp=False):
+def schmidt_stability(Temp, depth=None, time=None, bthA=None, bthD=None, sal = 0.2, g=9.81, dz=0.1, NaN_interp=False):
     '''
     Schmidt stability, or the resistance to mechanical mixing due to the potential energy inherent in the stratification of the water column.
 
@@ -443,12 +441,12 @@ def schmidt_stability(Temp, depths, bthA, bthD, sal = 0.2, g=9.81, dz=0.1, NaN_i
     -----------
     Temp: array_like
         water temperature in degrees C
-    depths:  array_like
+    depth:  array_like, default: None
         depth of the Temp measurements (m)
     bthA: array_like: 
-        cross sectional areas (m**2) corresponding to bthD depths
+        cross sectional areas (m**2) corresponding to bthD depth
     bthD: array_like
-        depths (m) which correspond to areal measures in bthA
+        depth (m) which correspond to areal measures in bthA
     sal: scalar,array_like, default: 0.2
         Salinity in Practical Salinity Scale units
     g: scalar, defaults: 9.81
@@ -468,8 +466,8 @@ def schmidt_stability(Temp, depths, bthA, bthD, sal = 0.2, g=9.81, dz=0.1, NaN_i
     >>>    bthA	=	np.array([1000,900,864,820,200,10])
     ...    bthD	=	np.array([0,2.3,2.5,4.2,5.8,7]) 
     ...    wtr	=	np.array([28,27,26.4,26,25.4,24,23.3])
-    ...    depths	=np.array([0,1,2,3,4,5,6])  
-    ...    pylake.schmidt_stability(wtr, depths, bthA, bthD, sal=.2, g=self.g)
+    ...    depth	=np.array([0,1,2,3,4,5,6])  
+    ...    pylake.schmidt_stability(wtr, depth, bthA, bthD, sal=.2, g=self.g)
     array([21.20261732])
 
     equation
@@ -477,29 +475,25 @@ def schmidt_stability(Temp, depths, bthA, bthD, sal = 0.2, g=9.81, dz=0.1, NaN_i
     g/A0 int(0,zmax, (zv-z)(rho_i-rho_v)A(z)dz)
 
     '''
-    Temp = format_Temp(depths, Temp)
-    if NaN_interp:
-        if sum(sum(np.isnan(Temp))):
-            nan_index_time = np.where(np.isnan(Temp))[0]
-            for time in nan_index_time:
-                mask = np.isnan(Temp[time,:])
-                Temp[time,:][mask] = np.interp(np.flatnonzero(mask), np.flatnonzero(~mask), Temp[time,:][~mask])
+    Temp, depth = to_xarray(Temp, depth, time)
+    Temp  = Temp.interpolate_na(dim='depth')
 
-    z0 = np.min(depths)
-    I0 = np.argmin(depths)
+    z0 = np.min(depth)
+    I0 = np.argmin(depth)
     A0 = bthA[I0]
-    rhoL = sw.dens0(t=Temp,s=sal)
+    rhoL = dens0(t=Temp,s=sal)
     
-    layerD = np.arange(z0, np.max(depths),dz)
-    f = interp1d(depths,rhoL, axis=1)
-    layerP = f(layerD)
+    layerD = np.arange(z0, np.max(depth),dz)
+    layerP = rhoL.interp(depth=layerD)
+    layerP = layerP.to_numpy()
     layerA = np.interp(layerD, bthD, bthA)
 
     Zcv = np.matmul(layerD,layerA)/np.sum(layerA)
     St = np.matmul(layerP, ((layerD - Zcv) * layerA) * dz * g / A0)
+    St = xr.DataArray(St, coords={"time":Temp.time})
     return St 
 
-def internal_energy(Temp, depths, bthA, bthD, s=0.2):
+def internal_energy(Temp, bthA, bthD, depth=None, s=0.2):
     '''
     Calculates the internal energy of the water column with temperature and hypsography
     Internal energy is the thermal energy in the water column, which is
@@ -510,12 +504,12 @@ def internal_energy(Temp, depths, bthA, bthD, s=0.2):
     -----------
     Temp: array_like: 
         water temperature in degrees C
-    depths: array_like:
-        depths (in m) of the Temp measurements
+    depth: array_like:
+        depth (in m) of the Temp measurements
     bthA: array_like:
-        cross sectional areas (m^2) corresponding to bthD depths
+        cross sectional areas (m^2) corresponding to bthD depth
     bthD array_like:
-        depths (m) which correspond to areal measures in bthA
+        depth (m) which correspond to areal measures in bthA
 
     Returns
     ---------
@@ -527,47 +521,45 @@ def internal_energy(Temp, depths, bthA, bthD, s=0.2):
     >>>    bthA =np.array([1000,900,864,820,200,10])
     ...    bthD=np.array([0,2.3,2.5,4.2,5.8,7])
     ...    wtr	=np.array([28,27,26.4,26,25.4,24,23.3])
-    ...    depths	= np.array([0,1,2,3,4,5,6])
-    ...    lw.internal_energy(wtr, depths, bthA, bthD, s=0.2)
+    ...    depth	= np.array([0,1,2,3,4,5,6])
+    ...    lw.internal_energy(wtr, depth, bthA, bthD, s=0.2)
     ...    520423172.7994813
     '''
     dz = 0.1
     cw = 4186
-    Temp = format_Temp(depths, Temp)
+    Temp,depth = to_xarray(Temp, depth)
+    #Check this with xarray
     numD = Temp.shape[1]-1
-    if max(bthD) > depths[numD]:
+    if max(bthD) > depth[numD]:
         Temp  = np.append(Temp,Temp[:,numD])
-        depths = np.append(depths,max(bthD))
-    elif max(bthD)<depths[numD]:
-        bthD = np.append(bthD,depths[numD])
+        depth = np.append(depth,max(bthD))
+    elif max(bthD)<depth[numD]:
+        bthD = np.append(bthD,depth[numD])
         bthA = np.append(bthA, 0)
-    if min(bthD)<depths[0]:
+    if min(bthD)<depth[0]:
         Temp = np.hstack((Temp[:,0].reshape(-1,1),Temp))
-        depths = np.append(np.min(bthD), depths)
-    Zo = min(depths)
-    Io = np.argmin(depths)
+        depth = np.append(np.min(bthD), depth)
+    
+    Zo = min(depth)
+    Io = np.argmin(depth)
     Ao = bthA[Io]
 
     if Ao==0:
         print("surface area cannot be zero, check bathymetric file")
-    rhoL = sw.dens0(s=s,t=Temp)
-    layerD = np.arange(Zo, np.max(depths),dz)
-    frhoL = interp1d(depths,rhoL)
-    layerP = frhoL(layerD)
-    fTemp = interp1d(depths,Temp)
-    layerT = fTemp(layerD)
+    
+    Temp, depth = to_xarray(Temp,depth)
+    rhoL = dens0(s=s,t=Temp)
+    layerD = np.arange(Zo, np.max(depth),dz)
+    layerP = rhoL.interp(depth=layerD)
+    layerT = Temp.interp(depth=layerD)
     layerA = np.interp(layerD, bthD, bthA)
 
     v_i = layerA*dz
     m_i = layerP*v_i
     u_i = layerT*m_i*cw
-    if u_i.ndim==2:
-        U = np.nansum(u_i,axis=1)/layerA[0]
-    elif u_i.ndim==1:
-        U = np.nansum(u_i)/layerA[0]
-    else:
-        print("Could not find the dimension")
-    return U
+
+    U = u_i.sum('depth')/layerA[0]
+    return U 
 
 def seiche_period_1(depth, Zt, Lt, delta_rho, AvHyp_rho, g= 9.81) :
     '''
@@ -575,8 +567,8 @@ def seiche_period_1(depth, Zt, Lt, delta_rho, AvHyp_rho, g= 9.81) :
 
     Parameters
     -----------
-    depths: array_like:
-        depths (in m) of the Temp measurements
+    depth: array_like:
+        depth (in m) of the Temp measurements
     Zt: array_like, scalar
         Thermocline depth 
     At: scalar 
@@ -597,20 +589,20 @@ def seiche_period_1(depth, Zt, Lt, delta_rho, AvHyp_rho, g= 9.81) :
     ---------
     >>>    bthA =np.array([1000,900,864,820,200,10])
     ...    bthD=np.array([0,2.3,2.5,4.2,5.8,7])
-    ...    depths	= np.array([0,1,2,3,4,5,6])
+    ...    depth	= np.array([0,1,2,3,4,5,6])
     ...    Zt = 4.5
     ...    Lt = 4000
     ...    delta_rho = 0.5
     ...    AvHyp_rho = 997
-    ...    lw.seiche_period_1(depths, Zt, Lt, delta_rho, AvHyp_rho, g= 9.81)
+    ...    lw.seiche_period_1(depth, Zt, Lt, delta_rho, AvHyp_rho, g= 9.81)
     ...    1445418 
     '''
     g_reduced = g*delta_rho/AvHyp_rho
     Zd = depth[-1]
     T1 = 2*Zd*Lt/(g_reduced*Zt*(Zd-Zt))
-    return T1
+    return T1 
 
-def Lake_number(bthA, bthD, uStar, St, metaT, metaB, averageHypoDense, g=9.81):
+def Lake_number(bthA, bthD, ustar, St, metaT, metaB, averageHypoDense, g=9.81):
     '''
     Description: The Lake Number, defined by Imberger and Patterson (1990), has been used to
     describe processes relevant to the internal mixing of lakes induced by wind
@@ -642,9 +634,9 @@ def Lake_number(bthA, bthD, uStar, St, metaT, metaB, averageHypoDense, g=9.81):
     Parameters
     -----------
     bthA: array_like:
-        a numeric vector of cross sectional areas (m2) corresponding to bthD depths, hypsographic areas
+        a numeric vector of cross sectional areas (m2) corresponding to bthD depth, hypsographic areas
     bthD: array_like:
-        a numeric vector of depths (m) which correspond to areal measures in bthA, hypsographic depths
+        a numeric vector of depth (m) which correspond to areal measures in bthA, hypsographic depth
     uStar: array_like:
         a numeric array of u* (m/s), water friction velocity due to wind stress
     St: array_like
@@ -685,10 +677,10 @@ def Lake_number(bthA, bthD, uStar, St, metaT, metaB, averageHypoDense, g=9.81):
     Zv = layerD*layerA*dz                    
     Zcv = sum(Zv)/sum(layerA)/dz
     St_uC = St*A0/g
-    Ln = g*St_uC*(metaT+metaB)/(2*averageHypoDense*uStar**2*A0**(3/2)*Zcv)
-    return Ln
+    Ln = g*St_uC*(metaT+metaB)/(2*averageHypoDense*ustar**2*A0**(3/2)*Zcv)
+    return Ln 
 
-def buoyancy_freq(Temp, depths, g=9.81):
+def buoyancy_freq(Temp, depth, g=9.81):
     '''
     Description: Calculate the buoyancy frequency (Brunt-Vaisala frequency) for a temperature profile.
 
@@ -696,8 +688,8 @@ def buoyancy_freq(Temp, depths, g=9.81):
     ----------- 
     Temp: array_like
         A numeric vector of water temperature in degrees C
-    depths: array_like
-        a numeric vector corresponding to the depths (in m) of the Temp measurements
+    depth: array_like
+        a numeric vector corresponding to the depth (in m) of the Temp measurements
     g: scalar, default: 9.81
         gravity acceleration (m/s2)
     
@@ -706,13 +698,13 @@ def buoyancy_freq(Temp, depths, g=9.81):
     n2: array_like
         a vector of buoyancy frequency in units \code{sec^-2}.
     n2depth: array_like
-        Return value has attribute "depths" which define buoyancy frequency depths (which differ from supplied depths).
+        Return value has attribute "depth" which define buoyancy frequency depth (which differ from supplied depth).
     
     Example
     ----------
     >>>     wtr = np.array([22.51, 22.42, 22.4, 22.4, 22.4, 22.36, 22.3, 22.21, 22.11, 21.23, 16.42,15.15, 14.24, 13.35, 10.94, 10.43, 10.36, 9.94, 9.45, 9.1, 8.91, 8.58, 8.43])
-    ...    depths = np.array([0, 0.5, 1, 1.5, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20])
-    ...    avg_depth, buoy_freq = lw.buoyancy_freq(wtr, depths, self.g)
+    ...    depth = np.array([0, 0.5, 1, 1.5, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20])
+    ...    avg_depth, buoy_freq = lw.buoyancy_freq(wtr, depth, self.g)
     ...    plt.pcolormesh(buoy_freq)
     ... array([4.10503572e-04, 9.10051748e-05, 0.00000000e+00, 0.00000000e+00,
         9.08868567e-05, 1.36034054e-04, 2.03383759e-04, 2.25040545e-04,
@@ -721,21 +713,18 @@ def buoyancy_freq(Temp, depths, g=9.81):
         3.73658150e-04, 4.06586584e-04, 2.70840415e-04, 1.40129203e-04,
         2.31752785e-04, 1.00430572e-04])
     '''
-    Temp = format_Temp(depths, Temp)
-    if depths.ndim==1:
-        depths_reshaped=depths.reshape(-1,1).T
-    rho = sw.dens0(s=0.2, t=Temp)
-    numDepths = len(depths)
-    if Temp.ndim==2:
-        rho_2=rho[:,:-1]
-    else:
-        rho_2=rho[:-1]
+    Temp, depth = to_xarray(Temp,depth)
+    rho = dens0(s=0.2, t=Temp)
+    numdepth = len(depth)
+    rho_2 = rho.isel(depth=slice(0,numdepth-1))
+    drho_dz = rho.diff('depth')/Temp.depth.diff('depth')
+    rho_2["depth"] = drho_dz.depth
+    n2 = g/rho_2*drho_dz
+    n2["depth"] = [(a+b)/2 for a,b in zip(depth, depth[1:])]
+    n2 = n2.rename({"depth":"avg_depth"})
+    return n2 
 
-    n2 = g/rho_2*np.diff(rho, axis=1)/np.diff(depths_reshaped, axis=1)
-    n2depth = [(a+b)/2 for a,b in zip(depths, depths[1:])]
-    return n2depth, n2 
-
-def Average_layer_temp(Temp, depths, depth_ref, top=False, bot=False):
+def Average_layer_temp(Temp, depth_ref, layer, depth=None):
     '''
     Perform the layer average temperature based on the thermocline depth 
 
@@ -743,8 +732,8 @@ def Average_layer_temp(Temp, depths, depth_ref, top=False, bot=False):
     -----------
     Temp: array_like, xarray: 
         A dataset containing the temperature. Must be of the same dimensions than the thermocline depth.
-    depths: array_like
-        a numeric vector corresponding to the depths (in m) of the Temp measurements
+    depth: array_like
+        a numeric vector corresponding to the depth (in m) of the Temp measurements
     depth_ref: array_like:
         reference depth in which the averaged temperature above or under is calculated.
 
@@ -756,95 +745,24 @@ def Average_layer_temp(Temp, depths, depth_ref, top=False, bot=False):
     Examples
     -----------
     >>> wtr = np.array([22.51, 22.42, 22.4, 22.4, 22.4, 22.36, 22.3, 22.21, 22.11, 21.23, 16.42,15.15, 14.24, 13.35, 10.94, 10.43, 10.36, 9.94, 9.45, 9.1, 8.91, 8.58, 8.43])
-    ... depths = np.array([0, 0.5, 1, 1.5, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20])
+    ... depth = np.array([0, 0.5, 1, 1.5, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20])
     ... depth_ref = 9 
-    ... lw.Average_layer_temp(wtr, depths, depth_ref, top=True)
+    ... lw.Average_layer_temp(wtr, depth, depth_ref, top=True)
     ... 21.70
-    ... lw.Average_layer_temp(wtr, depths, depth_ref, top=True)
+    ... lw.Average_layer_temp(wtr, depth, depth_ref, top=True)
     ... 10.33
     '''
-    if type(Temp)==np.ndarray:
-        Temp = format_Temp(depths, Temp)
-        coords = {'time':list(range(0,Temp.shape[0])),'depth':depths}
-        Temp = xr.DataArray(Temp, coords)
-    if top:
-        mask = (Temp.depth.values.reshape(-1,1)<depth_ref).T
-    elif bot:
-        mask = (Temp.depth.values.reshape(-1,1)>depth_ref).T
+    Temp, depth = to_xarray(Temp,depth)
+
+    if layer=='top':
+        mask = (Temp.depth<depth_ref)
+    elif layer=='bot':
+        mask = (Temp.depth>depth_ref)
     else:
         warnings.warnings("Temperature average of the whole water column")
         mean_temp = Temp.mean(dim="depth")
         return mean_temp
     masked_temp = Temp.where(mask)
     mean_temp = masked_temp.mean(dim="depth")
-    return mean_temp.to_numpy()
+    return mean_temp
 
-def mixed_layer_depth(depths, Temp, threshold=0.2, method='interp'):
-    '''
-    Calculates the mixed layer depth by using the difference temperature method.
-    The depth of the mixed layer is defined as the depth where the temperature difference with the temperature of the surface is greater than a threshold (default 0.1°C).
-    The algorithm does the difference of temperature from the surface to the bottom, reaching lower depth until it reaches a temperature difference lower than the threshold.
-    Surface Temperature might have NaNs. If it's the case, we take a deeper sensor (not more than 1m)
-
-    Parameters
-    -----------
-    depth : array_like 
-        depth vector (m)
-    Temp : array_like
-        Temperature matrix (degrees)
-    Threshold : scalar
-        threshold for the mixing layer detection
-    method: str, bool, default: interp
-        If set to interp, the dataset is rescaled with a smaller grid, and the data is therfore interpolated. 
-
-    Returns
-    -----------
-    hML array_like
-        Mixed layer depth (m)
-    
-    Example
-    ----------
-    >>>    wtr = np.array([22.51, 22.42, 22.4, 22.4, 22.4, 22.36, 22.3, 22.21, 22.11, 21.23, 16.42,15.15, 14.24, 13.35, 10.94, 10.43, 10.36, 9.94, 9.45, 9.1, 8.91, 8.58, 8.43])
-    ...    depths = np.array([0, 0.5, 1, 1.5, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20])
-    ...    lw.mixed_layer_depth(depths, wtr, threshold=0.1)
-    ...    1
-    '''
-    Temp = format_Temp(depths, Temp)
-    T_surf = Temp[:,0]
-
-    def nanTsurf(depths, Temp, T_surf, NaN_treshold=1):
-        # Check if sensor surface is not NaN, if it is, take the one below
-        # if one bellow deeper than NaN_treshold, warn that it's too deep
-        depth_idx_1m = np.where(depths>=NaN_treshold)[0][0]
-        idx_Tsurf_nan = np.where(np.isnan(T_surf))
-        depth_idx = np.zeros(len(T_surf))
-        for t in idx_Tsurf_nan[0]:
-            for T in Temp[t,1:]:
-                depth_idx[t] = depth_idx[t]+1
-                if not np.isnan(T):
-                    T_surf[t] = T
-                    break
-        exceed_threshold = np.where(depth_idx>=depth_idx_1m)[0]
-        if len(exceed_threshold):
-            warnings.warn(f"NaN values are present at the surface sensors for {len(exceed_threshold)} profiles")
-        return T_surf, exceed_threshold
-    
-    T_surf, nan_mask = nanTsurf(depths, Temp, T_surf, NaN_treshold=1)
-        
-    T_diff = T_surf-Temp.T-threshold
-
-    if method=='interp':
-        dz=0.1
-        T_diff = format_Temp(depths, T_diff)
-        coords = {'time':list(range(0,T_diff.shape[0])),'depth':depths}
-        ds = xr.DataArray(T_diff, coords)
-        depth_interp = np.arange(ds.depth.min(), ds.depth.max(), dz)
-        ds_interp = ds.interp(depth=depth_interp)
-        hML = abs(ds_interp).idxmin("depth")
-        hML[nan_mask] = np.nan
-        return hML.to_numpy()
-    else:
-        hML_idx = np.nanargmin(np.abs(ds), axis=0)
-        hML = depths[hML_idx]
-        hML[nan_mask] = np.nan
-        return hML

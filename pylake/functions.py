@@ -1,4 +1,33 @@
 import numpy as np
+import xarray as xr
+import warnings 
+def control(Temp, depths):
+    #Too chronophage and not so usefull
+    #if np.isnan(Temp).all:
+    #    warnings.warn("Could not deduce thermocline with only nan vector")
+    #    return np.nan
+    if Temp.shape[1]<3:
+        warnings.warn("Could not deduce thermocline with less than 3 measurements")
+        return np.nan
+    elif len(depths)!=len(np.unique(depths)):
+        warnings.warn("depths must be unique")
+        return np.nan
+    else:
+        return 1
+
+def to_xarray(Temp, depths, time=None):
+    if (type(Temp)==np.ndarray)or(type(Temp)==list):
+        Temp = format_Temp(depths, Temp)
+        if len(time):
+            coords = {'time':time,'depth':depths}
+        else:
+            coords = {'time':list(range(0,Temp.shape[0])),'depth':depths}
+
+        Temp = xr.DataArray(Temp, coords)
+    else:
+        depths = Temp["depth"].to_numpy()
+        Temp.load()
+    return Temp,depths
 
 def smooth_temp(Temp, depths, smooth):
     from scipy.signal import savgol_filter
@@ -69,7 +98,7 @@ def weighted_method(depths, rho, z_idx):
     -----------
     depths: array_like
         depth array
-    rho: array_like 
+    drho_dz: array_like 
         density array 
     z_idx: array_like
         thermocline index corresponding to the depths 
@@ -79,9 +108,16 @@ def weighted_method(depths, rho, z_idx):
     weighted_thermoD: array_like
         the adjusted weighted thermocline depth.
     '''
-    depths, rho, z_idx = list(map(np.asanyarray, (depths, rho, z_idx)))
+    if type(rho)==np.ndarray:
+        depths, rho, z_idx = list(map(np.asanyarray, (depths, rho, z_idx)))
+        rho = format_Temp(depths, rho)
+        coords = {'time':list(range(0,rho.shape[0])),'depth':depths}
+        rho = xr.DataArray(rho, coords)
+    else:
+        depths = rho.depth
+        rho.load()
 
-    drho_dz = np.diff(rho)/np.diff(depths)
+    drho_dz = rho.diff('depth')/rho.depth.diff('depth')
 
     #Mask boundarie values
     mask_up = z_idx==0
@@ -89,17 +125,16 @@ def weighted_method(depths, rho, z_idx):
 
     #Change values for boundaries to avoid any bug on the indexation
     z_masked = z_idx.copy()
-    z_masked[mask_up] = z_masked[mask_up]+1
-    z_masked[mask_down] = z_masked[mask_down]-1
+    z_masked = z_masked.where(~mask_up, z_masked+1)
+    z_masked = z_masked.where(~mask_down, z_masked-1)
 
     #Weighted method 
-    hplus = (depths[z_masked]   - depths[z_masked+2])/2
-    hminu = (depths[z_masked-1] - depths[z_masked+1])/2
+    hplus = (depths.isel(depth=z_masked) - depths.isel(depth=z_masked+2))/2
+    hminu = (depths.isel(depth=z_masked-1) - depths.isel(depth=z_masked+1))/2
 
-    time = np.arange(drho_dz.shape[0])
-    drho = drho_dz[time, z_masked]
-    drho_plus = drho_dz[time, z_masked+1]
-    drho_minu = drho_dz[time, z_masked-1]
+    drho = drho_dz.isel(depth=z_masked)
+    drho_plus = drho_dz.isel(depth=z_masked+1)
+    drho_minu = drho_dz.isel(depth=z_masked-1)
 
     Dplus = hplus/(drho-drho_plus)
     Dminu = hminu/(drho-drho_minu)
@@ -109,9 +144,9 @@ def weighted_method(depths, rho, z_idx):
     mask_inf = (np.isinf(Dplus/(Dminu+Dplus))) & (np.isinf(Dminu/(Dminu+Dplus)))
 
     #Restablish correct values for boundaries
-    weighted_thermoD[mask_up] = (depths[0]+depths[1])/2
-    weighted_thermoD[mask_down] = (depths[-1]+depths[-2])/2
-    weighted_thermoD[mask_inf] = np.nan
+    weighted_thermoD = weighted_thermoD.where(~mask_up, (depths[0]+depths[1])/2 )
+    weighted_thermoD =  weighted_thermoD.where(~mask_down, (depths[-1]+depths[-2])/2)
+    weighted_thermoD = weighted_thermoD.where(~mask_inf, np.nan)
 
     return weighted_thermoD
 
