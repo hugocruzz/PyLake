@@ -1,6 +1,7 @@
 import numpy as np
 import xarray as xr
 import warnings 
+
 def control(Temp, depths):
     #Too chronophage and not so usefull
     #if np.isnan(Temp).all:
@@ -42,51 +43,6 @@ def smooth_temp(Temp, depths, smooth):
     new_Temp = savgol_filter(Temp, window_size, order, mode=mode)
     return new_Temp
 
-def refine_scale(depths, drho_dz, thermoInd, thermoD):
-    '''
-    Estimate where the thermocline lies even between two temperature 
-    measurement depths, giving a potentially finer-scale estimate 
-    than usual techniques.
-
-    Parameters
-    -----------
-    depths: array_like
-        depth array
-    drho_dz: array_like 
-        density gradient 
-    thermoInd: array_like
-        thermocline index corresponding to the depths 
-    thermoD: array_like
-        thermocline depth in which the thermocline is changed.
-    
-    Returns
-    -----------
-    thermoD: array_like
-        the adjusted thermocline depth.
-    '''
-    depths, drho_dz, thermoInd, thermoD = list(map(np.asanyarray, (depths, drho_dz, thermoInd, thermoD)))
-    mask_updown=(thermoD>1)&(thermoInd<len(depths)-1)
-    #if thermoInd is maximum, remove it (the mask will not calculate this point anyway)
-    remove_bot = np.where((thermoInd==depths.size-1))[0]
-    thermoInd[remove_bot] = thermoInd[remove_bot]-1
-
-    D = depths[thermoInd]
-    dnD = depths[thermoInd+1]
-    upD = depths[thermoInd-1]
-
-    thermoD_drho_dz = drho_dz[np.arange(drho_dz.shape[0]), thermoInd]
-    down_thermoD_drho_dz = drho_dz[np.arange(drho_dz.shape[0]), thermoInd+1]
-    up_thermoD_drho_dz = drho_dz[np.arange(drho_dz.shape[0]), thermoInd-1]
-
-    Sdn = -(dnD-D)/(down_thermoD_drho_dz-thermoD_drho_dz)
-    Sup = (D-upD)/(thermoD_drho_dz-up_thermoD_drho_dz)
-
-    mask_inf = (~np.isinf(Sup)) & (~np.isinf(Sdn))
-    mask = mask_inf & mask_updown
-
-    new_thermoD = dnD*(Sdn/(Sdn+Sup))+D*(Sup/(Sdn+Sup))
-    thermoD[mask] = new_thermoD[mask]
-    return thermoD
 
 def weighted_method(depths, rho, z_idx):
     '''
@@ -121,7 +77,7 @@ def weighted_method(depths, rho, z_idx):
 
     #Mask boundarie values
     mask_up = z_idx==0
-    mask_down = z_idx==(len(depths)-1)
+    mask_down = (z_idx>=len(depths)-2)
 
     #Change values for boundaries to avoid any bug on the indexation
     z_masked = z_idx.copy()
@@ -149,6 +105,20 @@ def weighted_method(depths, rho, z_idx):
     weighted_thermoD = weighted_thermoD.where(~mask_inf, np.nan)
 
     return weighted_thermoD
+
+def check_bathy(Temp, bthA, bthD, depth):
+    #Check this with xarray
+    numD = Temp.shape[1]-1
+    if max(bthD) > depth[numD]:
+        Temp  = np.append(Temp,Temp[:,numD])
+        depth = np.append(depth,max(bthD))
+    elif max(bthD)<depth[numD]:
+        bthD = np.append(bthD,depth[numD])
+        bthA = np.append(bthA, 0)
+    if min(bthD)<depth[0]:
+        Temp = np.hstack((Temp[:,0].reshape(-1,1),Temp))
+        depth = np.append(np.min(bthD), depth)
+    return Temp,bthA,bthD,depth
 
 def T68conv(T90):
     return T90 * 1.00024
@@ -199,37 +169,3 @@ def set_nan(vec1, vec2):
 
 def round_up_to_odd(f):
     return int(np.ceil(f) // 2 * 2 + 1)
-
-# returns the index of the first occurrence of the element
-def find(array_1,element):
-    for i in range(len(array_1)):
-        if array_1[i]==element:
-            return(i)
-    return(False)
-
-#returns the index of the first occurrence of nan values
-def find_nan(array_1):
-    for i in range(len(array_1)):
-        if np.isnan(array_1[i]):
-            return(i)
-    return(False)
-
-#returns the index of the first occurrence of not nan values
-def find_not_nan(array_1):
-    for i in range(len(array_1)):
-        if np.isnan(array_1[i])==False:
-            return(i)
-    return(False)
-
-#returns the index of the first occurrence element which higher than the input number
-def find_sup(array_1,element):
-    for i in range(len(array_1)):
-        if array_1[i]>element:
-            return(i)
-    return(False)
-
-def find_inf(array_1,element):
-    for i in range(len(array_1)):
-        if array_1[i]<element:
-            return(i)
-    return(False)

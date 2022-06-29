@@ -5,8 +5,6 @@ from scipy.interpolate import interp1d
 import warnings
 from scipy.signal import find_peaks,savgol_filter
 import xarray as xr
-
-
     
 def thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, smooth=False):
     '''
@@ -78,16 +76,10 @@ def thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, smooth=False
 
     thermoD = weighted_method(depth, rhoVar, thermoInd)
 
-    thermoInd = abs(thermoD-Temp.depth).argmin('depth')
+    thermoInd = abs(thermoD-Temp.depth).fillna(999).argmin('depth')
 
-    is_not_significant["time"] = thermoD.time
     thermoD = thermoD.where(~is_not_significant, np.nan)
-    '''
-    Check not enabled, too much time to convert xr to np
-    NaN_profiles = np.isnan(thermoD).sum()
-    if NaN_profiles: 
-        warnings.warn(f"Temperature difference within the profile is too low to detect any thermocline for some profiles")
-    '''
+
     if len(thermoD)==1:
         thermoD = np.asscalar(thermoD)
         thermoInd = np.asscalar(thermoInd)
@@ -158,30 +150,23 @@ def seasonal_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, Smi
     time = Temp.time
     rhoVar = dens0(s=s,t=Temp)
     drho_dz = rhoVar.diff('depth')/rhoVar.depth.diff('depth')
-    mDrhoZ = drho_dz.max('depth')
 
     dRhoCut = Smin*np.ones(Temp.shape[0])
     drho_dz["drhocut"] = ('time', dRhoCut)
 
     thermoD, thermoInd = thermocline(Temp, depth, smooth=smooth, mixed_cutoff=mixed_cutoff)        
 
-    def process_peaks(arr, Smin):
+    def process_peaks(arr, Smin, thermoInd):
+        #If no peak is found, set SthermoInd to thermoInd
         arr = arr.copy()
         locs, peaks = find_peaks(arr, height=Smin)
-        if len(locs):
+        if (len(locs)and(~np.isnan(locs[-1]))):
             SthermoInd = locs[-1].astype(int)
         else:
-            SthermoInd = np.nan
+            SthermoInd = thermoInd
         return SthermoInd
 
-    SthermoInd = xr.apply_ufunc(process_peaks, drho_dz, Smin, input_core_dims=[['depth'],[]],output_core_dims=[[]], vectorize=True)
-
-    #If no peak is found, set SthermoInd to thermoInd
-    NaN_mask = np.isnan(SthermoInd)
-    thermoInd["time"]=NaN_mask.time
-    thermoInd["time"]=SthermoInd.time
-    SthermoInd = SthermoInd.where(~NaN_mask, thermoInd)
-    SthermoInd = SthermoInd.astype(int)
+    SthermoInd = xr.apply_ufunc(process_peaks, drho_dz, Smin, thermoInd, input_core_dims=[['depth'],[],[]],output_core_dims=[[]], vectorize=True)
 
     SthermoD = weighted_method(depth, rhoVar, SthermoInd)
 
@@ -298,6 +283,19 @@ def metalimnion(Temp, depth=False, slope=0.1, seasonal=False, mixed_cutoff=1, sm
     e_mark = mark_value.where(mark_value<0)
     h_mark = mark_value.where(mark_value>0)
     
+    hyp_idx = h_mark.fillna(999).diff('depth').argmax('depth')
+    hyp_depth = h_mark.isel(depth=hyp_idx).depth
+
+    e_marked_rev = abs(e_mark)[::-1]
+    ep_idx_rev = e_marked_rev.fillna(999).diff('depth').argmax(dim='depth')
+    ep_depth = e_marked_rev.isel(depth=ep_idx_rev).depth
+
+    only_NaN_h_mark = (~np.isnan(h_mark)).sum('depth')>0
+    only_NaN_e_mark = (~np.isnan(e_mark)).sum('depth')>0
+    epi_depth = ep_depth.where(only_NaN_e_mark, ep_depth["thermoD"])
+    hypo_depth = hyp_depth.where(only_NaN_h_mark, hyp_depth["thermoD"])
+
+    '''
     epilimnion_idx_no_nan = e_mark.fillna(-999).argmax(dim='depth')
     epilimnion_idx = epilimnion_idx_no_nan.where(epilimnion_idx_no_nan!=-1,drho_dz["thermoInd"]) #If not found, make it equal to the thermoInd
     hypolimnion_idx_no_nan = h_mark.fillna(999).argmin(dim='depth')
@@ -305,10 +303,10 @@ def metalimnion(Temp, depth=False, slope=0.1, seasonal=False, mixed_cutoff=1, sm
 
     hypo_depth = drho_dz["depth"].isel(depth=hypolimnion_idx)
     epi_depth = drho_dz["depth"].isel(depth=epilimnion_idx)
-
+    '''
     hypo_depth_filt = hypo_depth.where(hypo_depth>hypo_depth["thermoD"],hypo_depth["thermoD"])
     epi_depth_filt = epi_depth.where(epi_depth<epi_depth["thermoD"],epi_depth["thermoD"])
-
+    
     return epi_depth_filt, hypo_depth_filt
 
 def mixed_layer(Temp, depth=None, threshold=0.2):
@@ -349,7 +347,7 @@ def mixed_layer(Temp, depth=None, threshold=0.2):
     
     T_diff = T_surf-Temp.T-threshold
 
-    hML_idx = T_diff.argmin('depth')
+    hML_idx = T_diff.fillna(999).argmin('depth')
     hML = Temp.depth.isel(depth=hML_idx)
 
     return hML
@@ -433,7 +431,7 @@ def wedderburn(delta_rho, metaT, uSt, AvHyp_rho, Lo=False, Ao=False, g=9.81):
     W = go*metaT**2/(uSt**2*Lo)
     return W 
 
-def schmidt_stability(Temp, depth=None, time=None, bthA=None, bthD=None, sal = 0.2, g=9.81, dz=0.1, NaN_interp=False):
+def schmidt_stability(Temp, depth=None, time=None, bthA=None, bthD=None, sal = 0.2, g=9.81, dz=0.1):
     '''
     Schmidt stability, or the resistance to mechanical mixing due to the potential energy inherent in the stratification of the water column.
 
@@ -528,17 +526,9 @@ def internal_energy(Temp, bthA, bthD, depth=None, s=0.2):
     dz = 0.1
     cw = 4186
     Temp,depth = to_xarray(Temp, depth)
-    #Check this with xarray
-    numD = Temp.shape[1]-1
-    if max(bthD) > depth[numD]:
-        Temp  = np.append(Temp,Temp[:,numD])
-        depth = np.append(depth,max(bthD))
-    elif max(bthD)<depth[numD]:
-        bthD = np.append(bthD,depth[numD])
-        bthA = np.append(bthA, 0)
-    if min(bthD)<depth[0]:
-        Temp = np.hstack((Temp[:,0].reshape(-1,1),Temp))
-        depth = np.append(np.min(bthD), depth)
+
+
+    #Temp, bthA, bthD, depth = check_bathy(Temp, bthA, bthD, depth)
     
     Zo = min(depth)
     Io = np.argmin(depth)
@@ -560,6 +550,7 @@ def internal_energy(Temp, bthA, bthD, depth=None, s=0.2):
 
     U = u_i.sum('depth')/layerA[0]
     return U 
+
 
 def seiche_period_1(depth, Zt, Lt, delta_rho, AvHyp_rho, g= 9.81) :
     '''
@@ -724,7 +715,7 @@ def buoyancy_freq(Temp, depth, g=9.81):
     n2 = n2.rename({"depth":"avg_depth"})
     return n2 
 
-def Average_layer_temp(Temp, depth_ref, layer, depth=None):
+def Average_layer_temp(Temp, depth_ref, layer='top', depth=None):
     '''
     Perform the layer average temperature based on the thermocline depth 
 
@@ -732,10 +723,13 @@ def Average_layer_temp(Temp, depth_ref, layer, depth=None):
     -----------
     Temp: array_like, xarray: 
         A dataset containing the temperature. Must be of the same dimensions than the thermocline depth.
-    depth: array_like
-        a numeric vector corresponding to the depth (in m) of the Temp measurements
     depth_ref: array_like:
         reference depth in which the averaged temperature above or under is calculated.
+    layer: str, default: 'top'
+        layer='top' will do the average temperature above the depth_ref
+        layer='bot' will do the average temperature under the depth_ref
+    depth: array_like
+        a numeric vector corresponding to the depth (in m) of the Temp measurements. Necessary if not using xarray
 
     Returns
     -----------
