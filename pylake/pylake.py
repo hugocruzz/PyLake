@@ -60,9 +60,9 @@ def thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, smooth=False
     '''
 
     Temp, depth = to_xarray(Temp, depth,time)
-
+    '''
     if np.isnan(control(Temp,depth)):
-        return Temp.time*np.nan
+        return Temp.time*np.nan'''
     
     is_not_significant = Temp.max('depth')-Temp.min('depth')<mixed_cutoff
     if smooth:
@@ -80,7 +80,7 @@ def thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, smooth=False
 
     thermoD = thermoD.where(~is_not_significant, np.nan)
 
-    if len(thermoD)==1:
+    if thermoD.size==1:
         thermoD = np.asscalar(thermoD)
         thermoInd = np.asscalar(thermoInd)
     return thermoD, thermoInd
@@ -179,7 +179,7 @@ def seasonal_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, Smi
 
     if len(thermoD)!=1:
         if seasonal_smoothed:
-            SthermoD = savgol_filter(SthermoD, round_up_to_odd(len(SthermoD)/30), 3, mode='nearest')
+            SthermoD = smooth_1D(SthermoD, seasonal_smoothed)
             SthermoD = xr.DataArray(SthermoD, coords={'time':time})
     else:
         SthermoD = np.asscalar(SthermoD)
@@ -262,16 +262,15 @@ def metalimnion(Temp, depth=False, slope=0.1, seasonal=False, mixed_cutoff=1, sm
         thermoD, thermoInd = thermocline(Temp, depth, mixed_cutoff=mixed_cutoff, smooth=False)
 
 
-    thermoD, thermoInd = list(map(np.asanyarray, (thermoD, thermoInd)))
-    thermoD = thermoD.reshape(-1)
-    thermoInd = thermoInd.reshape(-1)
-    Temp["thermoInd"] = ('time', thermoInd)
-    Temp["thermoD"] = ('time', thermoD)
+    #thermoD, thermoInd = list(map(np.asanyarray, (thermoD, thermoInd)))
+    Temp["thermoInd"] = thermoInd
+    Temp["thermoD"] = thermoD
 
     rhoVar = dens0(s=s,t=Temp)
     drho_dz = rhoVar.diff('depth')/rhoVar.depth.diff('depth')
     drho_dz["depth"] = [(a+b)/2 for a,b in zip(depth, depth[1:])]
-    drho_dz["thermoInd"] = ('time', find_nearest_index(drho_dz["depth"].to_numpy(), drho_dz["thermoD"].to_numpy()))
+
+    drho_dz["thermoInd"] = abs(drho_dz["thermoD"]-drho_dz["depth"]).fillna(999).argmin('depth')
     mark =  drho_dz["depth"]-drho_dz["thermoD"]
 
     if slope=="relative":
@@ -295,15 +294,6 @@ def metalimnion(Temp, depth=False, slope=0.1, seasonal=False, mixed_cutoff=1, sm
     epi_depth = ep_depth.where(only_NaN_e_mark, ep_depth["thermoD"])
     hypo_depth = hyp_depth.where(only_NaN_h_mark, hyp_depth["thermoD"])
 
-    '''
-    epilimnion_idx_no_nan = e_mark.fillna(-999).argmax(dim='depth')
-    epilimnion_idx = epilimnion_idx_no_nan.where(epilimnion_idx_no_nan!=-1,drho_dz["thermoInd"]) #If not found, make it equal to the thermoInd
-    hypolimnion_idx_no_nan = h_mark.fillna(999).argmin(dim='depth')
-    hypolimnion_idx = hypolimnion_idx_no_nan.where(hypolimnion_idx_no_nan!=1,drho_dz["thermoInd"])
-
-    hypo_depth = drho_dz["depth"].isel(depth=hypolimnion_idx)
-    epi_depth = drho_dz["depth"].isel(depth=epilimnion_idx)
-    '''
     hypo_depth_filt = hypo_depth.where(hypo_depth>hypo_depth["thermoD"],hypo_depth["thermoD"])
     epi_depth_filt = epi_depth.where(epi_depth<epi_depth["thermoD"],epi_depth["thermoD"])
     
@@ -425,7 +415,7 @@ def wedderburn(delta_rho, metaT, uSt, AvHyp_rho, Lo=False, Ao=False, g=9.81):
         if Ao_cond:
             Lo = 2 * np.sqrt(Ao/np.pi);      #Length at thermocline depth
         else:
-            warnings.warnings("Please indicate either Lo or Ao")
+            warnings.warn("Please indicate either Lo or Ao")
 
     go = g*delta_rho/AvHyp_rho
     W = go*metaT**2/(uSt**2*Lo)
@@ -492,6 +482,7 @@ def schmidt_stability(Temp, depth=None, time=None, bthA=None, bthD=None, sal = 0
     return St 
 
 def internal_energy(Temp, bthA, bthD, depth=None, s=0.2):
+    #HEAT CONTENT RENAME
     '''
     Calculates the internal energy of the water column with temperature and hypsography
     Internal energy is the thermal energy in the water column, which is

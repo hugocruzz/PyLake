@@ -29,6 +29,19 @@ def to_xarray(Temp, depths, time=None):
         depths = Temp["depth"].to_numpy()
         Temp.load()
     return Temp,depths
+    
+def smooth_1D(Temp, smooth):
+    from scipy.signal import savgol_filter
+    if type(smooth)==dict:
+        window_size = smooth.get("window_size",len(Temp)/10)
+        mode = smooth.get("method",'nearest')
+        order = smooth.get("order",3)
+    else:
+        window_size= round_up_to_odd(len(Temp)/10)
+        mode = 'nearest'
+        order = 3
+    new_Temp = savgol_filter(Temp, window_size, order, mode=mode)
+    return new_Temp
 
 def smooth_temp(Temp, depths, smooth):
     from scipy.signal import savgol_filter
@@ -123,7 +136,7 @@ def check_bathy(Temp, bthA, bthD, depth):
 def T68conv(T90):
     return T90 * 1.00024
 
-def dens0(s,t):
+def dens0(t,s=0.2):
     b = (8.24493e-1, -4.0899e-3, 7.6438e-5, -8.2467e-7, 5.3875e-9)
     c = (-5.72466e-3, 1.0227e-4, -1.6546e-6)
     d = 4.8314e-4
