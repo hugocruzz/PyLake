@@ -50,8 +50,8 @@ def thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, smooth=False
     Examples
     ----------
     >>>     import pylake
-    ...     temp = np.array([14.3,14,12.1,10,9.7,9.5,5,4.5,4.4,4.3])
-    ...     depth = np.array([1,2,3,4,5,6,7,8,9,10])
+    ...     temp = temp = np.array([14.3,14,12.1,10,9.7,9.5,6,5])
+    ...     depth = depth = np.array([1,2,3,4,5,6,7,8])
     ...     thermo, thermoInd = pylake.thermocline(temp,depth)
     ...     print(f"thermocline depth: {thermo}\n")
     ...     print(f"thermocline depth index: {thermoInd}\n")
@@ -78,8 +78,8 @@ def thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, smooth=False
     thermoD = thermoD.where(~is_not_significant, np.nan)
 
     if thermoD.size==1:
-        thermoD = np.asscalar(thermoD)
-        thermoInd = np.asscalar(thermoInd)
+        thermoD = thermoD.values.item()
+        thermoInd = thermoInd.data.item()
     return thermoD, thermoInd
 
 
@@ -134,13 +134,13 @@ def seasonal_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, Smi
     Examples
     ----------
     >>>     import pylake
-    ...     temp = np.array([14.3,14,12.1,10,9.7,9.5,5,4.5,4.4,4.3])
-    ...     depth = np.array([1,2,3,4,5,6,7,8,9,10])
+    ...     temp = np.array([14.3,14,12.1,10,9.7,9.5,6,5])
+    ...     depth = np.array([1,2,3,4,5,6,7,8])
     ...     Sthermo, SthermoInd = pylake.seasonal_thermocline(temp,depth)
     ...     print(f"Seasonal thermocline depth: {Sthermo}\n")
     ...     print(f"Seasonal thermocline depth index: {SthermoInd}\n")
-    ...     Seasonal thermocline depth: 6.4880232728589355 
-    ...     Seasonal thermocline depth index: 5
+    ...     Seasonal thermocline depth: 6.510728817460102
+    ...     Seasonal thermocline depth index: 6
     '''
 
     Temp, depth = to_xarray(Temp, depth, time)
@@ -175,17 +175,17 @@ def seasonal_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, Smi
     NaN_mask = np.isnan(SthermoD)
     SthermoInd = abs(SthermoD[~NaN_mask]-Temp.depth).argmin('depth')
 
-    if len(thermoD)!=1:
+    if len(SthermoD)!=1:
         if seasonal_smoothed:
             SthermoD = smooth_1D(SthermoD, seasonal_smoothed)
             SthermoD = xr.DataArray(SthermoD, coords={'time':time})
     else:
-        SthermoD = np.asscalar(SthermoD)
-        SthermoInd = np.asscalar(SthermoInd)
+        SthermoD = SthermoD.values.item()
+        SthermoInd = SthermoInd.values.item()
     return SthermoD, SthermoInd
 
 
-def metalimnion(Temp, depth=False, slope=0.1, seasonal=False, mixed_cutoff=1, smooth=False, s=0.2):
+def metalimnion(Temp, depth=None, slope=0.1, seasonal=False, mixed_cutoff=1, smooth=False, s=0.2):
     '''
     Calculates the top and bottom depth of the metalimnion in a stratified
     lake. The metalimnion is defined as the water stratum in a stratified lake
@@ -236,12 +236,12 @@ def metalimnion(Temp, depth=False, slope=0.1, seasonal=False, mixed_cutoff=1, sm
     Examples
     ----------
     >>>     import pylake
-    ...     temp = np.array([14.3,14,12.1,10,9.7,9.5])
-    ...     depth = np.array([1,2,3,4,5,6])
+    ...     temp = np.array([14.3,14,12.1,10,9.7,9.5,6,5])
+    ...     depth = np.array([1,2,3,4,5,6,7,8])
     ...     epilimnion, hypolimnion = pylake.metalimnion(temp, depth)
     ...     print(f"Epilimnion: {epilimnion} \n Hypolimnion: {hypolimnion}.")
-    Epilimnion: 1.5
-    Hypolimnion: 4.5
+    Epilimnion: 2.5
+    Hypolimnion: 3.5
 
     References
     ----------
@@ -295,6 +295,9 @@ def metalimnion(Temp, depth=False, slope=0.1, seasonal=False, mixed_cutoff=1, sm
     hypo_depth_filt = hypo_depth.where(hypo_depth>hypo_depth["thermoD"],hypo_depth["thermoD"])
     epi_depth_filt = epi_depth.where(epi_depth<epi_depth["thermoD"],epi_depth["thermoD"])
     
+    if epi_depth_filt.size==1:
+        epi_depth_filt = epi_depth_filt.values.item()
+        hypo_depth_filt = hypo_depth_filt.data.item()
     return epi_depth_filt, hypo_depth_filt
 
 def mixed_layer(Temp, depth=None, threshold=0.2):
@@ -320,10 +323,10 @@ def mixed_layer(Temp, depth=None, threshold=0.2):
     
     Example
     ----------
-    >>>    wtr = np.array([22.51, 22.42, 22.4, 22.4, 22.4, 22.36, 22.3, 22.21, 22.11, 21.23, 16.42,15.15, 14.24, 13.35, 10.94, 10.43, 10.36, 9.94, 9.45, 9.1, 8.91, 8.58, 8.43])
-    ...    depth = np.array([0, 0.5, 1, 1.5, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20])
-    ...    pylake.mixed_layer(depth, wtr, threshold=0.1)
-    ...    1
+    >>>    temp = np.array([14.3,14,12.1,10,9.7,9.5,6,5])
+    ...    depth = np.array([1,2,3,4,5,6,7,8])
+    ...    hML = pylake.mixed_layer(depth, wtr, threshold=0.1)
+    ...    print(hML)
     '''
     Temp, depth = to_xarray(Temp, depth)
 
@@ -335,9 +338,10 @@ def mixed_layer(Temp, depth=None, threshold=0.2):
     
     T_diff = T_surf-Temp.T-threshold
 
-    hML_idx = T_diff.fillna(999).argmin('depth')
+    hML_idx = T_diff.where(T_diff>0).fillna(999).argmin('depth')
     hML = Temp.depth.isel(depth=hML_idx)
-
+    if hML.size==1:
+        hML = hML.values.item()
     return hML
 
 def wedderburn(delta_rho, metaT, uSt, AvHyp_rho, Lo=False, Ao=False, g=9.81):
@@ -452,7 +456,7 @@ def schmidt_stability(Temp, depth=None, time=None, bthA=None, bthD=None, sal = 0
     >>>    bthA	=	np.array([1000,900,864,820,200,10])
     ...    bthD	=	np.array([0,2.3,2.5,4.2,5.8,7]) 
     ...    wtr	=	np.array([28,27,26.4,26,25.4,24,23.3])
-    ...    depth	=np.array([0,1,2,3,4,5,6])  
+    ...    depth=   np.array([0,1,2,3,4,5,6])  
     ...    pylake.schmidt_stability(wtr, depth, bthA, bthD, sal=.2, g=self.g)
     array([21.20261732])
 
@@ -659,7 +663,7 @@ def Lake_number(bthA, bthD, ustar, St, metaT, metaB, averageHypoDense, g=9.81):
     Ln = g*St_uC*(metaT+metaB)/(2*averageHypoDense*ustar**2*A0**(3/2)*Zcv)
     return Ln 
 
-def buoyancy_freq(Temp, depth, g=9.81):
+def buoyancy_freq(Temp, depth=None, g=9.81):
     '''
     Description: Calculate the buoyancy frequency (Brunt-Vaisala frequency) for a temperature profile.
 
