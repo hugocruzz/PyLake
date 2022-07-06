@@ -481,11 +481,10 @@ def schmidt_stability(Temp, depth=None, time=None, bthA=None, bthD=None, sal = 0
     St = layers["P"]@right_side
     return St 
 
-def internal_energy(Temp, bthA, bthD, depth=None, s=0.2):
-    #HEAT CONTENT RENAME
+def heat_content(Temp, bthA, bthD, depth=None, s=0.2):
     '''
-    Calculates the internal energy of the water column with temperature and hypsography
-    Internal energy is the thermal energy in the water column, which is
+    Calculates the heat content of the water column with temperature and hypsography
+    Heat content is the thermal energy in the water column, which is
     calculated by multiplying the specific heat of water (J kg-1 K-1) by the
     temperature and mass of the water in the lake.
 
@@ -750,9 +749,36 @@ def Average_layer_temp(Temp, depth_ref, layer='top', depth=None):
     return mean_temp
 
 def Surface_Buoyancy_Flux(swT,sHFturb0,rho0):
-    JB = sw.alpha(0.2,swT,0)*9.81/sw.cp(0.2,swT,0)*sHFturb0/rho0
-    return JB
+    '''
+    Calculate the surface buyoancy flux
 
-def Monin_Obukhov(ustar, JB):
-    LMO = ustar**3/0.4/JB
+    Parameters
+    -------------
+    swT: array_like, unit: °C
+        Surface water temperature in °C 
+    sHFturb0: array_like, unit: W/m2
+        Net Surface Heat Flux - Absorbed Shortwave Radiation 
+    rho0: array_like
+        Lake Surface Density kg/m3
+
+    returns
+    -------------
+    JB0: array_like
+        Surface buoyancy flux W/m2
+    '''
+    JB0 = sw.alpha(0.2,swT,0)*9.81/sw.cp(0.2,swT,0)*sHFturb0/rho0
+    return JB0
+
+def Monin_Obukhov(ustar, JB0):
+    '''
+    Calculate Monin-Obhukov length
+
+    Parameters
+    -------------
+    ustar: array_like, unit: m/s
+        Shear Velocity on water
+    JB0: array_like, unit: W/m2
+        Surface buoyancy flux 
+    '''
+    LMO = ustar**3/0.4/JB0
     return LMO
