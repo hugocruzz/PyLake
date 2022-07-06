@@ -17,12 +17,8 @@ Implemented methods:
 * Lake Number
 * Brunt-Vaisala frequency
 * Average layer temperature
+* Monin-Obhukov 
 
-Future updates:
-* Data check and comparison with other sources
-* Xarray based algorithms for spatial data compatibility
-* Thermocline uses a smoothing algorithm (savgol filter) to correct the variability in vertical resolution. This method is temporary and need to be replaced.
-* Mixed layer interpolation need to be optimized, set as parameter for now
 
 ## Installation
 
