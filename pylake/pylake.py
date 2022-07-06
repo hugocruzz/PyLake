@@ -60,10 +60,7 @@ def thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, smooth=False
     '''
 
     Temp, depth = to_xarray(Temp, depth,time)
-    '''
-    if np.isnan(control(Temp,depth)):
-        return Temp.time*np.nan'''
-    
+
     is_not_significant = Temp.max('depth')-Temp.min('depth')<mixed_cutoff
     if smooth:
         time = Temp.time
@@ -151,7 +148,7 @@ def seasonal_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, Smi
     rhoVar = dens0(s=s,t=Temp)
     drho_dz = rhoVar.diff('depth')/rhoVar.depth.diff('depth')
 
-    dRhoCut = Smin*np.ones(Temp.shape[0])
+    dRhoCut = Smin*np.ones(time.size)
     drho_dz["drhocut"] = ('time', dRhoCut)
 
     thermoD, thermoInd = thermocline(Temp, depth, smooth=smooth, mixed_cutoff=mixed_cutoff)        
@@ -175,7 +172,8 @@ def seasonal_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, Smi
     SthermoD = SthermoD.where(~mask, thermoD)
     SthermoInd = SthermoInd.where(~mask, thermoInd)
 
-    SthermoInd = abs(SthermoD-Temp.depth).argmin('depth')
+    NaN_mask = np.isnan(SthermoD)
+    SthermoInd = abs(SthermoD[~NaN_mask]-Temp.depth).argmin('depth')
 
     if len(thermoD)!=1:
         if seasonal_smoothed:
@@ -473,12 +471,14 @@ def schmidt_stability(Temp, depth=None, time=None, bthA=None, bthD=None, sal = 0
     
     layerD = np.arange(z0, np.max(depth),dz)
     layerP = rhoL.interp(depth=layerD)
-    layerP = layerP.to_numpy()
+    layers = layerP.copy()
     layerA = np.interp(layerD, bthD, bthA)
-
-    Zcv = np.matmul(layerD,layerA)/np.sum(layerA)
-    St = np.matmul(layerP, ((layerD - Zcv) * layerA) * dz * g / A0)
-    St = xr.DataArray(St, coords={"time":Temp.time})
+    layers["A"]=('depth', layerA)
+    layers["D"] = layers.depth
+    layers["P"] = layerP
+    Zcv = (layers["D"]@layers["A"])/layers["A"].sum()
+    right_side = ((layers["D"]-Zcv) * layers["A"]) * dz * g / A0
+    St = layers["P"]@right_side
     return St 
 
 def internal_energy(Temp, bthA, bthD, depth=None, s=0.2):
@@ -517,8 +517,6 @@ def internal_energy(Temp, bthA, bthD, depth=None, s=0.2):
     dz = 0.1
     cw = 4186
     Temp,depth = to_xarray(Temp, depth)
-
-
     #Temp, bthA, bthD, depth = check_bathy(Temp, bthA, bthD, depth)
     
     Zo = min(depth)
@@ -528,14 +526,14 @@ def internal_energy(Temp, bthA, bthD, depth=None, s=0.2):
     if Ao==0:
         print("surface area cannot be zero, check bathymetric file")
     
-    Temp, depth = to_xarray(Temp,depth)
     rhoL = dens0(s=s,t=Temp)
     layerD = np.arange(Zo, np.max(depth),dz)
     layerP = rhoL.interp(depth=layerD)
     layerT = Temp.interp(depth=layerD)
     layerA = np.interp(layerD, bthD, bthA)
+    layerP["layerA"] = ('depth', layerA)
 
-    v_i = layerA*dz
+    v_i = layerP["layerA"]*dz
     m_i = layerP*v_i
     u_i = layerT*m_i*cw
 
@@ -751,3 +749,10 @@ def Average_layer_temp(Temp, depth_ref, layer='top', depth=None):
     mean_temp = masked_temp.mean(dim="depth")
     return mean_temp
 
+def Surface_Buoyancy_Flux(swT,sHFturb0,rho0):
+    JB = sw.alpha(0.2,swT,0)*9.81/sw.cp(0.2,swT,0)*sHFturb0/rho0
+    return JB
+
+def Monin_Obukhov(ustar, JB):
+    LMO = ustar**3/0.4/JB
+    return LMO
