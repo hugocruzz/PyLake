@@ -2,14 +2,17 @@
 
 This work present methods used to compute meaningful physical properties in aquatic sciences.
 
-Multi-dimensional array (time and depth) are compatible.
+The methods are based on Xarray. 
+Multi-dimensional array are compatible if an xarray is passed as input. 
 
-Algorithms and documentation are inspired by LakeAnalyzer in R (https://github.com/GLEON/rLakeAnalyzer)
+This package is meant to be used on large time serie of data like presented in https://www.datalakes-eawag.ch/datadetail/886
+
+Algorithms and documentation are sometimes inspired by LakeAnalyzer in R (https://github.com/GLEON/rLakeAnalyzer)
 
 Implemented methods:
 * Thermocline
 * Mixed layer
-* Metalimnion extent (top metalimnion and bottom metalimnion)
+* Metalimnion extent (epilimnion and hypolimnion depth)
 * Wedderburn Number
 * Schmidt stability
 * internal energy
@@ -19,17 +22,23 @@ Implemented methods:
 * Average layer temperature
 * Monin-Obhukov 
 
-
 ## Installation
 
 `pip install pylake`
 
 ## Usage
+
+Have a look in the notebooks, an example is provided
+
 ```python
 import pylake
 import numpy as np
 
-temp = np.array([14.3,14,12.1,10,9.7,9.5])
-depth = np.array([1,2,3,4,5,6])
-hypolimnion, epilimnion = pylake.metalimnion(temp, depth)
+Temp = np.array([14.3,14,12.1,10,9.7,9.5,6,5])
+depth = np.array([1,2,3,4,5,6,7,8])
+epilimnion, hypolimnion = pylake.metalimnion(temp, depth)
 ```
+
+ ## Work in progress
+
+ Lake metabolizer is being implemented. 
