@@ -19,7 +19,7 @@ def control(Temp, depths):
 def to_xarray(Temp, depths, time=None):
     if (type(Temp)==np.ndarray)or(type(Temp)==list):
         Temp = format_Temp(depths, Temp)
-        if time:
+        if time is not None:
             coords = {'time':time,'depth':depths}
         else:
             coords = {'time':list(range(0,Temp.shape[0])),'depth':depths}
