@@ -149,7 +149,6 @@ def seasonal_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, Smi
     drho_dz = rhoVar.diff('depth')/rhoVar.depth.diff('depth')
 
     dRhoCut = Smin*np.ones(time.size)
-    drho_dz["drhocut"] = ('time', dRhoCut)
 
     thermoD, thermoInd = thermocline(Temp, depth, smooth=smooth, mixed_cutoff=mixed_cutoff)        
 
@@ -172,8 +171,7 @@ def seasonal_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, Smi
     SthermoD = SthermoD.where(~mask, thermoD)
     SthermoInd = SthermoInd.where(~mask, thermoInd)
 
-    NaN_mask = np.isnan(SthermoD)
-    SthermoInd = abs(SthermoD[~NaN_mask]-Temp.depth).argmin('depth')
+    SthermoInd = abs(SthermoD-Temp.depth).fillna(999).argmin('depth')
 
     if len(SthermoD)!=1:
         if seasonal_smoothed:
