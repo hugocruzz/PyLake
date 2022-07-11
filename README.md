@@ -22,11 +22,12 @@ Implemented methods:
 
 ## Installation
 
+Pylake use Dask which require a python version >=3.8
+
 `pip install pylake`
 
 ## Usage
 
-Pylake use Dask which require a python version >=3.8
 
 Have a look in the notebooks, an example is provided
 
