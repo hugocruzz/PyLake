@@ -15,7 +15,7 @@ Implemented methods:
 * Metalimnion extent (epilimnion and hypolimnion depth)
 * Wedderburn Number
 * Schmidt stability
-* internal energy
+* Heat content
 * Seiche periode
 * Lake Number
 * Brunt-Vaisala frequency
@@ -27,6 +27,8 @@ Implemented methods:
 `pip install pylake`
 
 ## Usage
+
+Pylake use Dask which require a python version >=3.8
 
 Have a look in the notebooks, an example is provided
 
