@@ -3,9 +3,7 @@
 This work present methods used to compute meaningful physical properties in aquatic sciences.
 
 The methods are based on Xarray. 
-Multi-dimensional array are compatible if an xarray is passed as input. 
-
-This package is meant to be used on large time serie of data like presented in https://www.datalakes-eawag.ch/datadetail/886
+Multi-dimensional large time-series array are compatible if an xarray is passed as input.
 
 Algorithms and documentation are sometimes inspired by LakeAnalyzer in R (https://github.com/GLEON/rLakeAnalyzer)
 
@@ -42,5 +40,5 @@ epilimnion, hypolimnion = pylake.metalimnion(temp, depth)
 ```
 
  ## Work in progress
-
+ Warning messages
  Lake metabolizer is being implemented. 
