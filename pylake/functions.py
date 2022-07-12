@@ -116,7 +116,10 @@ def weighted_method(depths, rho, z_idx):
     weighted_thermoD = weighted_thermoD.where(~mask_up, (depths[0]+depths[1])/2 )
     weighted_thermoD =  weighted_thermoD.where(~mask_down, (depths[-1]+depths[-2])/2)
     weighted_thermoD = weighted_thermoD.where(~mask_inf, np.nan)
-
+    try:
+        weighted_thermoD = weighted_thermoD.drop_vars('depth')
+    except:
+        pass
     return weighted_thermoD
 
 def check_bathy(Temp, bthA, bthD, depth):

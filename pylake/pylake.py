@@ -69,7 +69,7 @@ def thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, smooth=False
 
     rhoVar = dens0(s=s,t=Temp)
     drho_dz = rhoVar.diff('depth')/rhoVar.depth.diff('depth')
-    thermoInd = drho_dz.argmax('depth')
+    thermoInd = drho_dz.fillna(-999).argmax('depth')
 
     thermoD = weighted_method(depth, rhoVar, thermoInd)
 
