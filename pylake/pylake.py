@@ -69,6 +69,8 @@ def thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, smooth=False
 
     rhoVar = dens0(s=s,t=Temp)
     drho_dz = rhoVar.diff('depth')/rhoVar.depth.diff('depth')
+    inf_mask = np.isinf(drho_dz)
+    drho_dz = drho_dz.where(~inf_mask, np.nan)
     thermoInd = drho_dz.fillna(-999).argmax('depth')
 
     thermoD = weighted_method(depth, rhoVar, thermoInd)
@@ -256,7 +258,6 @@ def metalimnion(Temp, depth=None, slope=0.1, seasonal=False, mixed_cutoff=1, smo
         thermoD, thermoInd = seasonal_thermocline(Temp, depth, mixed_cutoff=mixed_cutoff, smooth=False)
     else:
         thermoD, thermoInd = thermocline(Temp, depth, mixed_cutoff=mixed_cutoff, smooth=False)
-
 
     #thermoD, thermoInd = list(map(np.asanyarray, (thermoD, thermoInd)))
     Temp["thermoInd"] = thermoInd
