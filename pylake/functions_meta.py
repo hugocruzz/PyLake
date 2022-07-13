@@ -1,5 +1,16 @@
 import numpy as np
 from .functions import *
+def xarray_from_input(func, locals, coords):
+    ds = xr.Dataset(coords=coords)
+    for var in func.__code__.co_varnames:
+        try:
+            ds[var]=('time', locals[var])
+        except:
+            try:
+                ds[var]=locals[var]
+            except:pass
+    return ds
+
 
 def getSchmidt(temperature, gas):
     range_t = [4,35]

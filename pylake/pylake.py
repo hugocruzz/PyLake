@@ -545,7 +545,7 @@ def heat_content(Temp, bthA, bthD, depth=None, s=0.2):
 
 def seiche_period_1(depth, Zt, Lt, delta_rho, AvHyp_rho, g= 9.81) :
     '''
-    Estimation of the Seiche periode Monismith (1986).
+    Estimation of the Seiche periode based on: G. Monismith, 1985; Münnich, Wüest, & Imboden, 1992.
 
     Parameters
     -----------
@@ -581,7 +581,9 @@ def seiche_period_1(depth, Zt, Lt, delta_rho, AvHyp_rho, g= 9.81) :
     '''
     g_reduced = g*delta_rho/AvHyp_rho
     Zd = depth[-1]
-    T1 = 2*Zd*Lt/(g_reduced*Zt*(Zd-Zt))
+    h2 = Zd-Zt
+    h1 = Zt
+    T1 = 2*Lt*np.sqrt((h1+h2)/(g_reduced*h1*h2))
     return T1 
 
 def Lake_number(bthA, bthD, ustar, St, metaT, metaB, averageHypoDense, g=9.81):

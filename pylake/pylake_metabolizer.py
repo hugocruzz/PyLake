@@ -8,86 +8,98 @@ from .functions_meta import *
 import warnings
 
 def metab_bookkeep(do_obs, do_sat, k_gas, z_mix, irr, Datetime):
-    #Lake Metabolizer gives n number of points, 
-    
+    #May have a problem if multiple year data
     Datetime, do_obs, do_sat, k_gas, z_mix, irr = list(map(np.asanyarray, (Datetime, do_obs, do_sat, k_gas, z_mix, irr)))
-    Datetime = pd.to_datetime(Datetime)
-    #freq = (Datetime[1]-Datetime[0]).total_seconds()/60
     loc = locals()
-    ds = xarray_from_input(metab_bookkeep, loc, coords = {'time':Datetime})
-    freq = ds.time.size
-    '''
-    if(any(z_mix <= 0)):
-        warnings.warn("z_mix must be greater than zero.")'''
-    
-    dayI = (ds["irr"]>0)
-    nightI = (ds["irr"]<=0)
+    dataset = xarray_from_input(metab_bookkeep, loc, coords = {'time':Datetime})
+    if type(dataset["time"][0].values)==np.ndarray:
+        dataset["time"] = pd.to_datetime(dataset["time"], unit='s')
+    ds_grouped = dataset.groupby("time.dayofyear")
+    R = []
+    NEP = []
+    GPP = []
+    DOY = []
+    TIME=[]
+    for group in list(ds_grouped):
+        ds = group[1]
+        doy = group[0]
+        TIME = np.append(TIME, ds["time"][0].values.astype(str)[:10])
+        DOY=np.append(DOY,doy)
+        
+        n = xr.ones_like(ds["do_sat"]).count()
+        
+        dayI = (ds["irr"]>0)
+        nightI = (ds["irr"]<=0)
 
-    delta_do = ds["do_obs"].diff('time')
-    miss_delta = sum(np.isnan(delta_do)) # number of NA's
+        delta_do = ds["do_obs"].diff('time')
 
-    #gas flux out is negative
-    #normalized to z_mix, del_concentration/timestep (e.g., mg/L/10m)
-    gas_flux = (ds["do_sat"] - ds["do_obs"]) * (ds["k_gas"]/freq) / ds["z_mix"].data
+        gas_flux = (ds["do_sat"] - ds["do_obs"]) * (ds["k_gas"]/n) / ds["z_mix"]
 
-    #remove the component of delta.do that is due to gas flux
-    delta_do_metab = delta_do - gas_flux
-
-    #normalize units to per-day
-    # delta.do.meta.daily = delta.do.metab * (60*60*24)/as.numeric(delta.times, 'secs')
-
-    nep_day = delta_do_metab.where(dayI).resample(time='1D')
-    nep_night = delta_do_metab.where(nightI).resample(time='1D')
-
-    R = nep_night.mean('time') * freq # should be negative
-    NEP = delta_do_metab.resample(time='1D').mean('time') * freq # can be positive or negative
-    GPP = nep_day.mean('time') * dayI.mean('time') - nep_night.mean('time') * dayI.mean('time') # should be positive
-    metab = {"GPP":GPP, "R":R, "NEP":NEP}
+        delta_do_metab = delta_do - gas_flux
+        #gas flux is negative because DO is oversaturated. 
+        #Does this equation assumes under saturation ??
+        #Goal is to remove gas flux
+        #Here if gas flux < 0 means adding something to delta_do
+        
+        nep_day = delta_do_metab.where(dayI)
+        nep_night = delta_do_metab.where(nightI)
+        
+        R = np.append(R, nep_night.mean('time')*n) # should be negative
+        NEP = np.append(NEP, delta_do_metab.mean('time')*n) # can be positive or negative
+        GPP = np.append(GPP, nep_day.mean('time') * dayI.sum('time') - nep_night.mean('time') * dayI.sum('time')) # should be positive
+        if nep_night.mean('time')*n>0:
+            print(1)
+    metab=({"time": TIME, "GPP":GPP, "R":R, "NEP":NEP})
     return metab
 
-def xarray_from_input(func, locals, coords):
-    ds = xr.Dataset(coords=coords)
-    for var in func.__code__.co_varnames:
-        try:
-            ds[var]=('time', locals[var])
-        except:
-            try:
-                ds[var]=locals[var]
-            except:pass
-    return ds
 
-def metab_ols(wtr, do_obs, do_sat, k_gas, z_mix, irr, freq):
+def metab_ols(wtr, do_obs, do_sat, k_gas, z_mix, irr, Datetime):
     from sklearn.linear_model import LinearRegression
     #Format and get rid of NaNs
-    freq, do_obs, do_sat, k_gas, z_mix, irr = list(map(np.asanyarray, (freq, do_obs, do_sat, k_gas, z_mix, irr)))
+    Datetime, do_obs, do_sat, k_gas, z_mix, irr = list(map(np.asanyarray, (Datetime, do_obs, do_sat, k_gas, z_mix, irr)))
     mask_nan = ~np.isnan(wtr)&~np.isnan(do_obs)&~np.isnan(do_sat)&~np.isnan(k_gas)&~np.isnan(z_mix)&~np.isnan(irr)
     do_obs, do_sat, k_gas, z_mix, irr, wtr = do_obs[mask_nan], do_sat[mask_nan], k_gas[mask_nan], z_mix[mask_nan], irr[mask_nan], wtr[mask_nan]
 
-    nobs = len(do_obs)
-    do_diff = np.diff(do_obs)
+    loc = locals()
+    dataset = xarray_from_input(metab_ols, loc, coords = {'time':Datetime})
+    ds_grouped = dataset.groupby("time.dayofyear")
+    R = []
+    NEP = []
+    GPP = []
+    DOY = []
+    for group in list(ds_grouped):
+        ds = group[1]
+        doy = group[0]
+        n = xr.ones_like(ds["do_sat"]).count()
 
-    inst_flux = (k_gas/freq) * (do_sat - do_obs)  # positive is into the lake
+        do_diff = ds["do_obs"].diff('time')
+        inst_flux = (ds["k_gas"]/n) * (ds["do_sat"] - ds["do_obs"])  # positive is into the lake
 
-    # flux = (inst_flux[1:(n.obs-1)] + inst_flux[-1])/2
-    flux = inst_flux[:-1]
+        # flux = (inst_flux[1:(n.obs-1)] + inst_flux[-1])/2
+        flux = inst_flux
 
-    noflux_do_diff = do_diff - flux/z_mix[:-1]
+        noflux_do_diff = do_diff - flux/ds["z_mix"]
 
-    lntemp = np.log(wtr)
+        lntemp = np.log(ds["wtr"])
 
-    regr = LinearRegression()
-    df = pd.DataFrame({"noflux_do_diff":noflux_do_diff, "irr": irr[:-1], "lntemp":lntemp[:-1]})
-    X= df[['irr', 'lntemp']]
-    y = df["noflux_do_diff"] 
-    reg = regr.fit(X,y)
-    iota = reg.coef_[0]
-    rho = reg.coef_[1]
+        regr = LinearRegression()
+        df = pd.DataFrame({"noflux_do_diff":noflux_do_diff, "irr": ds["irr"][:-1], "lntemp":lntemp[:-1]})
+        X= df[['irr', 'lntemp']]
+        y = df["noflux_do_diff"] 
+        reg = regr.fit(X,y)
+        iota = reg.coef_[0]
+        rho = reg.coef_[1]
 
-    gpp = np.nanmean(iota*irr[:-1])*freq
-    resp = np.nanmean(rho*lntemp[:-1])*freq
-    nep = gpp + resp
+        gpp = np.nanmean(iota*ds["irr"][:-1])*n
+        resp = np.nanmean(rho*lntemp[:-1])*n
+        nep = gpp + resp
 
-    results = {"GPP":gpp, "R":resp, "NEP":nep}
+        GPP = np.append(GPP,gpp)
+        R = np.append(R,resp)
+        NEP = np.append(NEP, nep)
+        DOY=np.append(DOY,doy)
+
+    results = {"DOY": DOY, "GPP":GPP, "R":R, "NEP":NEP}
     return(results)
 '''
 def metab_mle(do_obs, do_sat, k_gas, z_mix, irr, wtr, freq, error_type="OE"):
@@ -188,7 +200,7 @@ def o2_at_sat(temp, baro=None, altitude=0, salinity=.2, model='garcia-benson'):
 
 def k_cole(wnd):
     k600 = 2.07 + (0.215*(wnd**(1.7)))
-    k600 = k600*24/100
+    k600 = k600*24/100 #units in m d-1
     return k600
 
 def k_crusius(wnd, method='power'):
@@ -454,7 +466,6 @@ def k_macIntyre(wnd_z, Cd, Qlat, Qsen, Kd, air_press, dateTime, Ts, hML, airT, w
     B2 = rho_w*C_w
     Bflx = B1/B2
 
-
     # calculate kinematic viscosiy
     kinV = getKinematicVis(Ts)
     KeNm = uSt**3
@@ -473,6 +484,7 @@ def k_macIntyre(wnd_z, Cd, Qlat, Qsen, Kd, air_press, dateTime, Ts, hML, airT, w
     return k600
 
 def k_read_soloviev(wnd_z, Cd, Qlat, Qsen, Kd, lat, A0, air_press, dateTime, Ts, hML, airT, wnd, RH, sw, lwnet):
+    
     wnd_z, Cd, Qlat, Qsen, Kd, lat, A0, air_press, dateTime, Ts, hML, airT, wnd, RH, sw, lwnet = list(map(np.asanyarray, (wnd_z,\
          Cd, Qlat, Qsen, Kd, lat, A0, air_press, dateTime, Ts, hML, airT, wnd, RH, sw, lwnet)))
     # define constants used in function
@@ -616,7 +628,21 @@ def k_vachon(wnd, A0, params=np.array([2.51,1.48,0.39])):
     
 
 def k600_2_kGAS(k600,temperature,gas="O2"):
-
+    #'@title Returns the gas exchange velocity for gas of interest w/ no unit conversions
+    #'@description 
+    #'Returns the gas exchange velocity for gas of interest w/ no unit conversions
+    #'@usage
+    #'k600.2.kGAS.base(k600,temperature,gas="O2")
+    #'
+    #'k600.2.kGAS(ts.data, gas="O2")
+    #'
+    #'@param ts.data Object of class data.frame with named columns datetime and k600 and wtr (water temp in deg C). Other columns are ignored
+    #'@param k600 k600 as vector array of numbers or single number
+    #'@param temperature Water temperature (deg C) as vector array of numbers or single number
+    #'@param gas gas for conversion, as string (e.g., 'CO2' or 'O2')
+    #'@return Numeric value of gas exchange velocity for gas
+    #'@author Jordan S. Read
+    #'@seealso \link{k.read} and \link{k.read.base} for functions that calculate k600 estimates
     n	=	0.5
     schmidt	=	getSchmidt(temperature,gas)
     Sc600	=	schmidt/600
