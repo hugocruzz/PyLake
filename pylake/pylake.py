@@ -448,7 +448,7 @@ def schmidt_stability(Temp, depth=None, time=None, bthA=None, bthD=None, sal = 0
     
     Returns
     ----------
-        - Schmidt stability (J/m**2)
+        - Schmidt stability (J.m-2)
 
     Example
     ----------
@@ -565,7 +565,7 @@ def seiche_period_1(depth, Zt, Lt, delta_rho, AvHyp_rho, g= 9.81) :
     Returns
     ---------
     T1: array_like, scalar
-        Mode-1 vertical seiche period (s)
+        Mode-1 vertical seiche period (h)
 
     example
     ---------
@@ -584,7 +584,7 @@ def seiche_period_1(depth, Zt, Lt, delta_rho, AvHyp_rho, g= 9.81) :
     h2 = Zd-Zt
     h1 = Zt
     T1 = 2*Lt*np.sqrt((h1+h2)/(g_reduced*h1*h2))
-    return T1 
+    return T1*60*60
 
 def Lake_number(bthA, bthD, ustar, St, metaT, metaB, averageHypoDense, g=9.81):
     '''
