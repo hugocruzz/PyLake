@@ -539,7 +539,7 @@ def heat_content(Temp, bthA, bthD, depth=None, s=0.2):
     m_i = layerP*v_i
     u_i = layerT*m_i*cw
 
-    U = u_i.sum('depth')/layerA[0]
+    U = u_i.sum('depth')
     return U 
 
 
