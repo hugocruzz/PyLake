@@ -299,12 +299,12 @@ def metalimnion(Temp, depth=None, slope=0.1, seasonal=False, mixed_cutoff=1, smo
         hypo_depth_filt = hypo_depth_filt.data.item()
     return epi_depth_filt, hypo_depth_filt
 
-def mixed_layer(Temp, depth=None, threshold=0.2):
+def mixed_layer(Temp, depth=None, s=0.2, threshold=0.01):
     '''
-    Calculates the mixed layer depth by using the difference temperature method.
-    The depth of the mixed layer is defined as the depth where the temperature difference with the temperature of the surface is greater than a threshold (default 0.1°C).
-    The algorithm does the difference of temperature from the surface to the bottom, reaching lower depth until it reaches a temperature difference lower than the threshold.
-    Surface Temperature might have NaNs. If it's the case, we take a deeper sensor (not more than 1m)
+    Calculates the mixed layer depth by using the density difference method.
+    The depth of the mixed layer is defined as the depth where the density difference with the density of the surface is greater than a threshold (default 0.01 kg/m3).
+    The algorithm does the difference of density from the surface to the bottom, reaching lower depth until it reaches a density difference lower than the threshold.
+    Surface density might have NaNs. If it's the case, we take a deeper sensor (not more than 1m)
 
     Parameters
     -----------
@@ -312,6 +312,8 @@ def mixed_layer(Temp, depth=None, threshold=0.2):
         depth vector (m)
     Temp : array_like
         Temperature matrix (degrees)
+    s   : array_like
+        Salinity matrix (psu)
     Threshold : scalar
         threshold for the mixing layer detection
 
@@ -328,19 +330,30 @@ def mixed_layer(Temp, depth=None, threshold=0.2):
     ...    print(hML)
     '''
     Temp, depth = to_xarray(Temp, depth)
+    rho = dens0(s=s,t=Temp)
 
-    T_surf = Temp.isel(depth=0)
+    rho_surf = rho.isel(depth=0)
 
     #If surface sensor is NaN, check the second. Can be iterated until a certain depth.
-    NaN = np.where(np.isnan(T_surf))[0]
-    T_surf[NaN] = Temp.isel(time=NaN, depth=1)
+    NaN = np.where(np.isnan(rho_surf))[0]
+    rho_surf[NaN] = rho.isel(time=NaN, depth=1)
     
-    T_diff = T_surf-Temp.T-threshold
+    rho_diff = rho.T - rho_surf - threshold
 
-    hML_idx = T_diff.where(T_diff>0).fillna(999).argmin('depth')
-    hML = Temp.depth.isel(depth=hML_idx)
-    if hML.size==1:
-        hML = hML.values.item()
+    # Replace NaNs with 999 to indicate they don't fulfill the condition
+    rho_diff_filled = rho_diff.where(rho_diff > 0, other=999)
+
+    # Find the index of the minimum value along the depth dimension
+    hML_idx = rho_diff_filled.argmin('depth')
+
+    # Ensure hML_idx correctly handles the case where the condition is not met
+    if rho_diff_filled.isel(depth=hML_idx).values == 999:
+            hML_idx = len(rho.depth) - 1
+
+    # Get the depth corresponding to hML_idx
+    hML = rho.depth.isel(depth=hML_idx)
+    if hML.size == 1:
+            hML = hML.values.item()
     return hML
 
 def wedderburn(delta_rho, metaT, uSt, AvHyp_rho, Lo=False, Ao=False, g=9.81):
