@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 with open('README.md') as f:
     README = f.read()
 
-VERSION = '0.1.5'
+VERSION = '0.1.7'
 DESCRIPTION = 'pylake'
 
 setup(
@@ -15,7 +15,7 @@ setup(
     long_description=README,
     long_description_content_type='text/markdown',
     packages=find_packages(),
-    url='https://github.com/hugocruzz/pylake',
+    url='https://github.com/eawag-surface-waters-research/pylake',
     install_requires=[
         'numpy>=1.19.5',
         'pandas>=1.1.5',
