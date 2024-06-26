@@ -692,10 +692,7 @@ def buoyancy_freq(Temp, depth=None, g=9.81):
     
     Returns
     ----------
-    n2: array_like
-        a vector of buoyancy frequency in units \code{sec^-2}.
-    n2depth: array_like
-        Return value has attribute "depth" which define buoyancy frequency depth (which differ from supplied depth).
+    n2: xarray with buoyancy frequency in units \code{sec^-2} and associated average lake depths (can be different from input depths).
     
     Example
     ----------
