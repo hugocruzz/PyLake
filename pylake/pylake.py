@@ -146,6 +146,9 @@ def seasonal_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, Smi
     '''
 
     Temp, depth = to_xarray(Temp, depth, time)
+
+    is_not_significant = (Temp.max('depth') - Temp.min('depth')) < mixed_cutoff
+
     time = Temp.time
     rhoVar = dens0(s=s,t=Temp)
     drho_dz = rhoVar.diff('depth')/rhoVar.depth.diff('depth')
@@ -167,6 +170,7 @@ def seasonal_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, Smi
     SthermoInd = xr.apply_ufunc(process_peaks, drho_dz, Smin, thermoInd, input_core_dims=[['depth'],[],[]],output_core_dims=[[]], vectorize=True)
 
     SthermoD = weighted_method(depth, rhoVar, SthermoInd)
+    SthermoD = SthermoD.where(~is_not_significant, np.nan)
 
     #Compare the seasonal and the diurnal thermocline, seasonal should be at higher depth than the diurnal, if not, both are set equal.
     mask = (SthermoD<thermoD)
@@ -334,21 +338,22 @@ def mixed_layer(Temp, depth=None, s=0.2, threshold=0.01):
 
     rho_surf = rho.isel(depth=0)
 
-    #If surface sensor is NaN, check the second. Can be iterated until a certain depth.
+    #If surface sensor is NaN, check the second (could potentially be iterated further down)
     NaN = np.where(np.isnan(rho_surf))[0]
     rho_surf[NaN] = rho.isel(time=NaN, depth=1)
     
     rho_diff = rho.T - rho_surf - threshold
 
-    # Replace NaNs with 999 to indicate they don't fulfill the condition
+    # Set rho diff to 999 if not larger than a certain threshold
     rho_diff_filled = rho_diff.where(rho_diff > 0, other=999)
 
-    # Find the index of the minimum value along the depth dimension
+    # Find the index of the minimum value along the depth dimension (= depth first exceeds the threshold)
     hML_idx = rho_diff_filled.argmin('depth')
 
-    # Ensure hML_idx correctly handles the case where the condition is not met
-    if rho_diff_filled.isel(depth=hML_idx).values == 999:
-            hML_idx = len(rho.depth) - 1
+    # Set mixing depth to deepest depth if no valid density difference is discovered
+    for i in range(len(rho_diff_filled.isel(depth=hML_idx).values)):
+        if (rho_diff_filled.isel(depth=hML_idx).values[i] == 999):
+            hML_idx[i] = len(rho.depth) - 1
 
     # Get the depth corresponding to hML_idx
     hML = rho.depth.isel(depth=hML_idx)

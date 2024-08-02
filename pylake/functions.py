@@ -35,12 +35,13 @@ def smooth_1D(Temp, smooth):
     if type(smooth)==dict:
         window_size = smooth.get("window_size",len(Temp)/10)
         mode = smooth.get("method",'nearest')
-        order = smooth.get("order",3)
+        polyorder = min(3,window_size - 1)
+        order = smooth.get("order",polyorder)
     else:
         window_size= round_up_to_odd(len(Temp)/10)
         mode = 'nearest'
-        order = 3
-    new_Temp = savgol_filter(Temp, window_size, order, mode=mode)
+        polyorder = min(3,window_size - 1)
+    new_Temp = savgol_filter(Temp, window_size, polyorder, mode=mode)
     return new_Temp
 
 def smooth_temp(Temp, depths, smooth):
@@ -48,12 +49,13 @@ def smooth_temp(Temp, depths, smooth):
     if type(smooth)==dict:
         window_size = smooth.get("window_size",round_up_to_odd(len(depths)/10))
         mode = smooth.get("method",'nearest')
-        order = smooth.get("order",3)
+        polyorder = min(3,window_size - 1)
+        order = smooth.get("order",polyorder)
     else:
         window_size= round_up_to_odd(len(depths)/10)
         mode = 'nearest'
-        order = 3
-    new_Temp = savgol_filter(Temp, window_size, order, mode=mode)
+        polyorder = min(3,window_size - 1)
+    new_Temp = savgol_filter(Temp, window_size, polyorder, mode=mode)
     return new_Temp
 
 
