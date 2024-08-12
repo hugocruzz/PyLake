@@ -189,7 +189,7 @@ def seasonal_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, Smi
     return SthermoD, SthermoInd
 
 
-def metalimnion(Temp, depth=None, slope=0.1, seasonal=False, mixed_cutoff=1, smooth=False, s=0.2):
+def metalimnion(Temp, depth=None, slope=0.25, slope_calc="relative", seasonal=False, mixed_cutoff=1, smooth=False, s=0.2):
     '''
     Calculates the top and bottom depth of the metalimnion in a stratified
     lake. The metalimnion is defined as the water stratum in a stratified lake
@@ -274,8 +274,10 @@ def metalimnion(Temp, depth=None, slope=0.1, seasonal=False, mixed_cutoff=1, smo
     drho_dz["thermoInd"] = abs(drho_dz["thermoD"]-drho_dz["depth"]).fillna(999).argmin('depth')
     mark =  drho_dz["depth"]-drho_dz["thermoD"]
 
-    if slope=="relative":
-        slope = drho_dz.max('depth')/10
+    if slope_calc == "relative":
+        slope = drho_dz.max('depth') * slope
+    elif slope_calc == "absolute":
+        slope = slope
 
     cond = drho_dz<slope
 
@@ -300,7 +302,7 @@ def metalimnion(Temp, depth=None, slope=0.1, seasonal=False, mixed_cutoff=1, smo
     
     if epi_depth_filt.size==1:
         epi_depth_filt = epi_depth_filt.values.item()
-        hypo_depth_filt = hypo_depth_filt.data.item()
+        hypo_depth_filt = hypo_depth_filt.values.item()
     return epi_depth_filt, hypo_depth_filt
 
 def mixed_layer(Temp, depth=None, s=0.2, threshold=0.01):
