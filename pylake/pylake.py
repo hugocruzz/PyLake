@@ -28,9 +28,6 @@ def thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, smooth=False
         a numeric vector corresponding to the depth (in m) of the Temp
     s : array_like, default : 0.2
         Salinity of the water column in PSU
-    Smin : float, default: 0.1 °C/m
-        Optional parameter defining minimum density gradient for
-        thermocline.
     mixed_cutoff : scalar, default: 1
         The difference between the maximum and minimum of the
         temperature profile should be higher than this cutoff.
@@ -86,7 +83,7 @@ def thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, smooth=False
 
 
 
-def seasonal_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, Smin=0.1, seasonal_smoothed=True, smooth=False):
+def seasonal_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, Smin=0.005, seasonal_smoothed=True, smooth=False):
     '''
     Calculate depth of the thermocline from a temperature profile.
     
@@ -116,7 +113,7 @@ def seasonal_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, Smi
     mixed_cutoff : scalar, default: 1
         The difference between the maximum and minimum of the
         temperature profile should be higher than this cutoff.
-    Smin : float, default: 0.1 °C/m
+    Smin : float, default: 0.005 kg/m3/m
         Optional parameter defining minimum density gradient for
         thermocline. Threshold for the peak height of the scipy.signal.find_peaks(...).
     seasonal_smoothed: bool, default: True
@@ -153,6 +150,7 @@ def seasonal_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, Smi
     rhoVar = dens0(s=s,t=Temp)
     drho_dz = rhoVar.diff('depth')/rhoVar.depth.diff('depth')
 
+    # It seems that this is not used...
     dRhoCut = Smin*np.ones(time.size)
 
     thermoD, thermoInd = thermocline(Temp, depth, smooth=smooth, mixed_cutoff=mixed_cutoff)        
