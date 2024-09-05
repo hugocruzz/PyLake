@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 with open('README.md') as f:
     README = f.read()
 
-VERSION = '0.1.9'
+VERSION = '0.1.10'
 DESCRIPTION = 'pylake'
 
 setup(
