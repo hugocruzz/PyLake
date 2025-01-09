@@ -187,6 +187,74 @@ def seasonal_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, Smi
         SthermoInd = SthermoInd.values.item()
     return SthermoD, SthermoInd
 
+def robust_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1):
+    '''
+    Calculate the thermocline depth from one or various temperature profiles in a more robust way than gradient methods.
+
+    Method
+    ----------
+    It uses the method of taking the middle point between the upper and the lower bound of
+    the metalimnion. The middle point is calculated by taking the depth where temperature is
+    the average between the temperatures at the upper and lower bound of the metalimnion
+
+    Parameters
+    ----------
+    Temp :  array_like
+        a numeric vector of water temperature in degrees C
+    depth : array_like
+        a numeric vector corresponding to the depth (in m) of the Temp
+    s : array_like, default : 0.2
+        Salinity of the water column in PSU
+    mixed_cutoff : scalar, default: 1
+        The difference between the maximum and minimum of the
+        temperature profile should be higher than this cutoff.
+
+    Returns 
+    ----------
+    thermoD: array_like, scalar
+        thermocline depth (m)
+    
+    Examples
+    ----------
+    >>>     import pylake
+    ...     temp = temp = np.array([14.3,14,12.1,10,9.7,9.5,6,5])
+    ...     depth = depth = np.array([1,2,3,4,5,6,7,8])
+    ...     thermo = pylake.robust_thermocline(temp,depth)
+    ...     print(f"thermocline depth: {thermo}\n")
+    ...     thermocline depth: 6.50536441
+    '''
+
+
+    Temp, depth = to_xarray(Temp, depth, time)
+
+    # Thermocline is not significant if temperature difference is smaller than mixed_cutoff
+    is_not_significant = Temp.max('depth')-Temp.min('depth')<mixed_cutoff
+
+    # Compute upper and lower boundary of metalimnion
+    epi_depth,hypo_depth = metalimnion(Temp, depth, slope=0.5, slope_calc='relative', seasonal=True, mixed_cutoff=mixed_cutoff, smooth=True, s=s)
+
+    # Wrap in list in case it is a float
+    if isinstance(epi_depth, float):
+        epi_depth = [epi_depth]
+        hypo_depth = [hypo_depth]
+
+    # Initialize array with nan
+    thermoD = np.full(len(epi_depth), np.nan)
+
+    # Compute thermocline depth from metalimnion boundaries by taking the depth where temperature is equal to the average of the temperature at the metalimnion boundaries
+    for i in range(len(epi_depth)):
+        epi_temp = np.interp(epi_depth[i],depth,Temp.values[i, :])
+        hypo_temp = np.interp(hypo_depth[i],depth,Temp.values[i, :])
+        meta_temp = (epi_temp + hypo_temp)/2
+        thermoD[i] = np.interp(-meta_temp,-Temp.values[i, :],depth)
+
+    # Set insignificant thermocline values to nan
+    thermoD = np.where(~is_not_significant, thermoD, np.nan)
+
+    if thermoD.size==1:
+        thermoD = thermoD[0]
+    return thermoD
+
 
 def metalimnion(Temp, depth=None, slope=0.25, slope_calc="relative", seasonal=False, mixed_cutoff=1, smooth=False, s=0.2):
     '''
