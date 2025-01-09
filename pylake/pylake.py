@@ -190,10 +190,11 @@ def seasonal_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, Smi
 def robust_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1):
     '''
     Calculate the thermocline depth from one or various temperature profiles in a more robust way than gradient methods.
+    This is especially useful, if the depth resolution of the data is not very high.
 
     Method
     ----------
-    It uses the method of taking the middle point between the upper and the lower bound of
+    Thermocline depth is defined as the middle point between the upper and the lower bound of
     the metalimnion. The middle point is calculated by taking the depth where temperature is
     the average between the temperatures at the upper and lower bound of the metalimnion
 
