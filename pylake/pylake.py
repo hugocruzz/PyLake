@@ -1,6 +1,5 @@
 import numpy as np
 from .functions import *
-import gsw
 import seawater as sw
 from scipy.interpolate import interp1d
 import warnings
@@ -856,18 +855,7 @@ def Surface_Buoyancy_Flux(swT,sHFturb0,rho0):
     JB0: array_like
         Surface buoyancy flux W/m2
     '''
-    cp = sw.cp(0.2,swT,0)
-    alpha = sw.alpha(0.2,swT,0)
-
-    JB0 = alpha*9.81/cp*sHFturb0/rho0
-    print(JB0)
-    SA = gsw.SA_from_SP(0.2,0,0,45)
-    print('sa',SA)
-    CT = gsw.CT_from_t(SA, swT,0)
-    cp = gsw.cp_t_exact(SA,CT,0)
-    alpha = gsw.alpha(SA,CT,0)
-    JB0 = alpha*9.81/cp*sHFturb0/rho0
-    print(JB0)
+    JB0 = sw.alpha(0.2,swT,0)*9.81/sw.cp(0.2,swT,0)*sHFturb0/rho0
     return JB0
 
 def Monin_Obukhov(ustar, JB0):
