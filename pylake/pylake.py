@@ -1,6 +1,5 @@
 import numpy as np
 from .functions import *
-import gsw
 import seawater as sw
 from scipy.interpolate import interp1d
 import warnings
@@ -190,10 +189,11 @@ def seasonal_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, Smi
 def robust_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1):
     '''
     Calculate the thermocline depth from one or various temperature profiles in a more robust way than gradient methods.
+    This is especially useful, if the depth resolution of the data is not very high.
 
     Method
     ----------
-    It uses the method of taking the middle point between the upper and the lower bound of
+    Thermocline depth is defined as the middle point between the upper and the lower bound of
     the metalimnion. The middle point is calculated by taking the depth where temperature is
     the average between the temperatures at the upper and lower bound of the metalimnion
 
@@ -224,34 +224,36 @@ def robust_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1):
     ...     thermocline depth: 6.50536441
     '''
 
-
     Temp, depth = to_xarray(Temp, depth, time)
 
-    # Thermocline is not significant if temperature difference is smaller than mixed_cutoff
-    is_not_significant = Temp.max('depth')-Temp.min('depth')<mixed_cutoff
+    # Ensure Temp is (time, depth)
+    Temp = Temp.transpose('time', 'depth')
 
-    # Compute upper and lower boundary of metalimnion
-    epi_depth,hypo_depth = metalimnion(Temp, depth, slope=0.5, slope_calc='relative', seasonal=True, mixed_cutoff=mixed_cutoff, smooth=True, s=s)
+    # Compute significance
+    is_not_significant = Temp.max('depth') - Temp.min('depth') < mixed_cutoff
 
-    # Wrap in list in case it is a float
-    if isinstance(epi_depth, float):
-        epi_depth = [epi_depth]
-        hypo_depth = [hypo_depth]
+    # Metalimnion boundaries
+    epi_depth, hypo_depth = metalimnion(Temp, depth, slope=0.5, slope_calc='relative',
+                                        seasonal=True, mixed_cutoff=mixed_cutoff, smooth=True, s=s)
 
-    # Initialize array with nan
-    thermoD = np.full(len(epi_depth), np.nan)
+    # Force epi_depth and hypo_depth to 1D numpy arrays
+    epi_depth = np.atleast_1d(epi_depth)
+    hypo_depth = np.atleast_1d(hypo_depth)
 
-    # Compute thermocline depth from metalimnion boundaries by taking the depth where temperature is equal to the average of the temperature at the metalimnion boundaries
-    for i in range(len(epi_depth)):
-        epi_temp = np.interp(epi_depth[i],depth,Temp.values[i, :])
-        hypo_temp = np.interp(hypo_depth[i],depth,Temp.values[i, :])
-        meta_temp = (epi_temp + hypo_temp)/2
-        thermoD[i] = np.interp(-meta_temp,-Temp.values[i, :],depth)
+    # Initialize output
+    thermoD = np.full(epi_depth.shape[0], np.nan)
 
-    # Set insignificant thermocline values to nan
-    thermoD = np.where(~is_not_significant, thermoD, np.nan)
+    for i in range(epi_depth.shape[0]):
+        temp_profile = Temp.values[i, :]  # (depths)
+        epi_temp = np.interp(epi_depth[i], depth, temp_profile)
+        hypo_temp = np.interp(hypo_depth[i], depth, temp_profile)
+        meta_temp = (epi_temp + hypo_temp) / 2
+        thermoD[i] = np.interp(-meta_temp, -temp_profile, depth)
 
-    if thermoD.size==1:
+    # Apply significance mask
+    thermoD = np.where(~is_not_significant.values, thermoD, np.nan)
+
+    if thermoD.size == 1:
         thermoD = thermoD[0]
     return thermoD
 
@@ -326,7 +328,7 @@ def metalimnion(Temp, depth=None, slope=0.25, slope_calc="relative", seasonal=Fa
         Temp, depth = to_xarray(Temp, depth, time)
 
     if seasonal:
-        thermoD, thermoInd = seasonal_thermocline(Temp, depth, mixed_cutoff=mixed_cutoff, smooth=False)
+        thermoD, thermoInd = seasonal_thermocline(Temp, depth, mixed_cutoff=mixed_cutoff, smooth=False, seasonal_smoothed=False)
     else:
         thermoD, thermoInd = thermocline(Temp, depth, mixed_cutoff=mixed_cutoff, smooth=False)
 
@@ -855,18 +857,7 @@ def Surface_Buoyancy_Flux(swT,sHFturb0,rho0):
     JB0: array_like
         Surface buoyancy flux W/m2
     '''
-    cp = sw.cp(0.2,swT,0)
-    alpha = sw.alpha(0.2,swT,0)
-
-    JB0 = alpha*9.81/cp*sHFturb0/rho0
-    print(JB0)
-    SA = gsw.SA_from_SP(0.2,0,0,45)
-    print('sa',SA)
-    CT = gsw.CT_from_t(SA, swT,0)
-    cp = gsw.cp_t_exact(SA,CT,0)
-    alpha = gsw.alpha(SA,CT,0)
-    JB0 = alpha*9.81/cp*sHFturb0/rho0
-    print(JB0)
+    JB0 = sw.alpha(0.2,swT,0)*9.81/sw.cp(0.2,swT,0)*sHFturb0/rho0
     return JB0
 
 def Monin_Obukhov(ustar, JB0):
