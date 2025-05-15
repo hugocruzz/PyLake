@@ -186,6 +186,8 @@ def seasonal_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, Smi
         SthermoInd = SthermoInd.values.item()
     return SthermoD, SthermoInd
 
+
+
 def robust_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1):
     '''
     Calculate the thermocline depth from one or various temperature profiles in a more robust way than gradient methods.
@@ -234,7 +236,7 @@ def robust_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1):
 
     # Metalimnion boundaries
     epi_depth, hypo_depth = metalimnion(Temp, depth, slope=0.5, slope_calc='relative',
-                                        seasonal=True, mixed_cutoff=mixed_cutoff, smooth=True, s=s)
+                                        seasonal=False, mixed_cutoff=mixed_cutoff, smooth=True, s=s)
 
     # Force epi_depth and hypo_depth to 1D numpy arrays
     epi_depth = np.atleast_1d(epi_depth)
