@@ -83,7 +83,7 @@ def thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, smooth=False
 
 
 
-def seasonal_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, Smin=0.005, seasonal_smoothed=True, smooth=False):
+def seasonal_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, Smin=0.1, seasonal_smoothed=True, smooth=False):
     '''
     Calculate depth of the thermocline from a temperature profile.
     
@@ -113,7 +113,7 @@ def seasonal_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, Smi
     mixed_cutoff : scalar, default: 1
         The difference between the maximum and minimum of the
         temperature profile should be higher than this cutoff.
-    Smin : float, default: 0.005 kg/m3/m
+    Smin : float, default: 0.1 kg/m3/m
         Optional parameter defining minimum density gradient for
         thermocline. Threshold for the peak height of the scipy.signal.find_peaks(...).
     seasonal_smoothed: bool, default: True
@@ -407,7 +407,7 @@ def mixed_layer(Temp, depth=None, s=0.2, threshold=0.01):
     ...    print(hML)
     '''
     Temp, depth = to_xarray(Temp, depth)
-    rho = dens0(s=s,t=Temp)
+    rho = dens1(S=s,T=Temp)
 
     rho_surf = rho.isel(depth=0)
 
