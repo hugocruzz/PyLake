@@ -407,7 +407,7 @@ def mixed_layer(Temp, depth=None, s=0.2, threshold=0.01):
     ...    print(hML)
     '''
     Temp, depth = to_xarray(Temp, depth)
-    rho = dens1(S=s,T=Temp)
+    rho = dens0(s=s,t=Temp)
 
     rho_surf = rho.isel(depth=0)
 
