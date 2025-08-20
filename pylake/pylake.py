@@ -876,13 +876,37 @@ def Monin_Obukhov(ustar, JB0):
     LMO = ustar**3/0.4/JB0
     return LMO
 
-# Oxygen solubility to oxygen concentration according to Benson & Krause (1984) but without the effect of salinity, which is negligible for lakes
-# This transformation is also implemented in the idronaut, but with a salinity = 35 permil
-# [%] to [mg/L]
-def oxygen_solubility(T):
+def oxygen_solubility(T, saturation=100):
+    """
+    Oxygen solubility in freshwater (mg/L) according to Benson & Krause (1984),
+    without salinity effect (suitable for lakes).
+
+    Parameters
+    ----------
+    T : float or np.ndarray
+        Temperature in °C
+    saturation : float or np.ndarray, optional
+        Oxygen saturation in percent. Default is 100 for full saturation.
+
+    Returns
+    -------
+    O2 : float or np.ndarray
+        Oxygen concentration in mg/L corresponding to the given saturation.
+        If saturation=100, this is the solubility at equilibrium with air.
+    """
     T_K = T + 273.15
-    capac = -139.34411 + 1.575701e5/T_K - 6.642308e7/T_K**2 + 1.243800e10/T_K**3 -8.621949e11/T_K**4 # - S*(0.017674 - 10.754/T_K + 2140.7/T_K**2)
-    return np.exp(capac)
+    # Benson & Krause formula (logarithm of solubility)
+    ln_O2 = (-139.34411 + 1.575701e5/T_K
+             - 6.642308e7/T_K**2
+             + 1.243800e10/T_K**3
+             - 8.621949e11/T_K**4)
+    
+    O2_100 = np.exp(ln_O2)  # mg/L at 100% saturation
+
+    # Scale by percent saturation
+    O2_actual = O2_100 * saturation / 100.0
+    
+    return O2_actual
 
 def pressure_correction_to_DO(T, altitude):
     """
