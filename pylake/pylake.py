@@ -28,9 +28,6 @@ def thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, smooth=False
         a numeric vector corresponding to the depth (in m) of the Temp
     s : array_like, default : 0.2
         Salinity of the water column in PSU
-    Smin : float, default: 0.1 °C/m
-        Optional parameter defining minimum density gradient for
-        thermocline.
     mixed_cutoff : scalar, default: 1
         The difference between the maximum and minimum of the
         temperature profile should be higher than this cutoff.
@@ -116,7 +113,7 @@ def seasonal_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, Smi
     mixed_cutoff : scalar, default: 1
         The difference between the maximum and minimum of the
         temperature profile should be higher than this cutoff.
-    Smin : float, default: 0.1 °C/m
+    Smin : float, default: 0.1 kg/m3/m
         Optional parameter defining minimum density gradient for
         thermocline. Threshold for the peak height of the scipy.signal.find_peaks(...).
     seasonal_smoothed: bool, default: True
@@ -146,10 +143,14 @@ def seasonal_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, Smi
     '''
 
     Temp, depth = to_xarray(Temp, depth, time)
+
+    is_not_significant = (Temp.max('depth') - Temp.min('depth')) < mixed_cutoff
+
     time = Temp.time
     rhoVar = dens0(s=s,t=Temp)
     drho_dz = rhoVar.diff('depth')/rhoVar.depth.diff('depth')
 
+    # It seems that this is not used...
     dRhoCut = Smin*np.ones(time.size)
 
     thermoD, thermoInd = thermocline(Temp, depth, smooth=smooth, mixed_cutoff=mixed_cutoff)        
@@ -167,6 +168,7 @@ def seasonal_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, Smi
     SthermoInd = xr.apply_ufunc(process_peaks, drho_dz, Smin, thermoInd, input_core_dims=[['depth'],[],[]],output_core_dims=[[]], vectorize=True)
 
     SthermoD = weighted_method(depth, rhoVar, SthermoInd)
+    SthermoD = SthermoD.where(~is_not_significant, np.nan)
 
     #Compare the seasonal and the diurnal thermocline, seasonal should be at higher depth than the diurnal, if not, both are set equal.
     mask = (SthermoD<thermoD)
@@ -185,7 +187,80 @@ def seasonal_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1, Smi
     return SthermoD, SthermoInd
 
 
-def metalimnion(Temp, depth=None, slope=0.1, seasonal=False, mixed_cutoff=1, smooth=False, s=0.2):
+
+def robust_thermocline(Temp, depth=None, time=None, s=0.2, mixed_cutoff=1):
+    '''
+    Calculate the thermocline depth from one or various temperature profiles in a more robust way than gradient methods.
+    This is especially useful, if the depth resolution of the data is not very high.
+
+    Method
+    ----------
+    Thermocline depth is defined as the middle point between the upper and the lower bound of
+    the metalimnion. The middle point is calculated by taking the depth where temperature is
+    the average between the temperatures at the upper and lower bound of the metalimnion
+
+    Parameters
+    ----------
+    Temp :  array_like
+        a numeric vector of water temperature in degrees C
+    depth : array_like
+        a numeric vector corresponding to the depth (in m) of the Temp
+    s : array_like, default : 0.2
+        Salinity of the water column in PSU
+    mixed_cutoff : scalar, default: 1
+        The difference between the maximum and minimum of the
+        temperature profile should be higher than this cutoff.
+
+    Returns 
+    ----------
+    thermoD: array_like, scalar
+        thermocline depth (m)
+    
+    Examples
+    ----------
+    >>>     import pylake
+    ...     temp = temp = np.array([14.3,14,12.1,10,9.7,9.5,6,5])
+    ...     depth = depth = np.array([1,2,3,4,5,6,7,8])
+    ...     thermo = pylake.robust_thermocline(temp,depth)
+    ...     print(f"thermocline depth: {thermo}\n")
+    ...     thermocline depth: 6.50536441
+    '''
+
+    Temp, depth = to_xarray(Temp, depth, time)
+
+    # Ensure Temp is (time, depth)
+    Temp = Temp.transpose('time', 'depth')
+
+    # Compute significance
+    is_not_significant = Temp.max('depth') - Temp.min('depth') < mixed_cutoff
+
+    # Metalimnion boundaries
+    epi_depth, hypo_depth = metalimnion(Temp, depth, slope=0.5, slope_calc='relative',
+                                        seasonal=False, mixed_cutoff=mixed_cutoff, smooth=True, s=s)
+
+    # Force epi_depth and hypo_depth to 1D numpy arrays
+    epi_depth = np.atleast_1d(epi_depth)
+    hypo_depth = np.atleast_1d(hypo_depth)
+
+    # Initialize output
+    thermoD = np.full(epi_depth.shape[0], np.nan)
+
+    for i in range(epi_depth.shape[0]):
+        temp_profile = Temp.values[i, :]  # (depths)
+        epi_temp = np.interp(epi_depth[i], depth, temp_profile)
+        hypo_temp = np.interp(hypo_depth[i], depth, temp_profile)
+        meta_temp = (epi_temp + hypo_temp) / 2
+        thermoD[i] = np.interp(-meta_temp, -temp_profile, depth)
+
+    # Apply significance mask
+    thermoD = np.where(~is_not_significant.values, thermoD, np.nan)
+
+    if thermoD.size == 1:
+        thermoD = thermoD[0]
+    return thermoD
+
+
+def metalimnion(Temp, depth=None, slope=0.25, slope_calc="relative", seasonal=False, mixed_cutoff=1, smooth=False, s=0.2):
     '''
     Calculates the top and bottom depth of the metalimnion in a stratified
     lake. The metalimnion is defined as the water stratum in a stratified lake
@@ -255,7 +330,7 @@ def metalimnion(Temp, depth=None, slope=0.1, seasonal=False, mixed_cutoff=1, smo
         Temp, depth = to_xarray(Temp, depth, time)
 
     if seasonal:
-        thermoD, thermoInd = seasonal_thermocline(Temp, depth, mixed_cutoff=mixed_cutoff, smooth=False)
+        thermoD, thermoInd = seasonal_thermocline(Temp, depth, mixed_cutoff=mixed_cutoff, smooth=False, seasonal_smoothed=False)
     else:
         thermoD, thermoInd = thermocline(Temp, depth, mixed_cutoff=mixed_cutoff, smooth=False)
 
@@ -270,8 +345,10 @@ def metalimnion(Temp, depth=None, slope=0.1, seasonal=False, mixed_cutoff=1, smo
     drho_dz["thermoInd"] = abs(drho_dz["thermoD"]-drho_dz["depth"]).fillna(999).argmin('depth')
     mark =  drho_dz["depth"]-drho_dz["thermoD"]
 
-    if slope=="relative":
-        slope = drho_dz.max('depth')/10
+    if slope_calc == "relative":
+        slope = drho_dz.max('depth') * slope
+    elif slope_calc == "absolute":
+        slope = slope
 
     cond = drho_dz<slope
 
@@ -296,15 +373,15 @@ def metalimnion(Temp, depth=None, slope=0.1, seasonal=False, mixed_cutoff=1, smo
     
     if epi_depth_filt.size==1:
         epi_depth_filt = epi_depth_filt.values.item()
-        hypo_depth_filt = hypo_depth_filt.data.item()
+        hypo_depth_filt = hypo_depth_filt.values.item()
     return epi_depth_filt, hypo_depth_filt
 
-def mixed_layer(Temp, depth=None, threshold=0.2):
+def mixed_layer(Temp, depth=None, s=0.2, threshold=0.01):
     '''
-    Calculates the mixed layer depth by using the difference temperature method.
-    The depth of the mixed layer is defined as the depth where the temperature difference with the temperature of the surface is greater than a threshold (default 0.1°C).
-    The algorithm does the difference of temperature from the surface to the bottom, reaching lower depth until it reaches a temperature difference lower than the threshold.
-    Surface Temperature might have NaNs. If it's the case, we take a deeper sensor (not more than 1m)
+    Calculates the mixed layer depth by using the density difference method.
+    The depth of the mixed layer is defined as the depth where the density difference with the density of the surface is greater than a threshold (default 0.01 kg/m3).
+    The algorithm does the difference of density from the surface to the bottom, reaching lower depth until it reaches a density difference lower than the threshold.
+    Surface density might have NaNs. If it's the case, we take a deeper sensor (not more than 1m)
 
     Parameters
     -----------
@@ -312,6 +389,8 @@ def mixed_layer(Temp, depth=None, threshold=0.2):
         depth vector (m)
     Temp : array_like
         Temperature matrix (degrees)
+    s   : array_like
+        Salinity matrix (psu)
     Threshold : scalar
         threshold for the mixing layer detection
 
@@ -328,19 +407,31 @@ def mixed_layer(Temp, depth=None, threshold=0.2):
     ...    print(hML)
     '''
     Temp, depth = to_xarray(Temp, depth)
+    rho = dens0(s=s,t=Temp)
 
-    T_surf = Temp.isel(depth=0)
+    rho_surf = rho.isel(depth=0)
 
-    #If surface sensor is NaN, check the second. Can be iterated until a certain depth.
-    NaN = np.where(np.isnan(T_surf))[0]
-    T_surf[NaN] = Temp.isel(time=NaN, depth=1)
+    #If surface sensor is NaN, check the second (could potentially be iterated further down)
+    NaN = np.where(np.isnan(rho_surf))[0]
+    rho_surf[NaN] = rho.isel(time=NaN, depth=1)
     
-    T_diff = T_surf-Temp.T-threshold
+    rho_diff = rho.T - rho_surf - threshold
 
-    hML_idx = T_diff.where(T_diff>0).fillna(999).argmin('depth')
-    hML = Temp.depth.isel(depth=hML_idx)
-    if hML.size==1:
-        hML = hML.values.item()
+    # Set rho diff to 999 if not larger than a certain threshold
+    rho_diff_filled = rho_diff.where(rho_diff > 0, other=999)
+
+    # Find the index of the minimum value along the depth dimension (= depth first exceeds the threshold)
+    hML_idx = rho_diff_filled.argmin('depth')
+
+    # Set mixing depth to deepest depth if no valid density difference is discovered
+    for i in range(len(rho_diff_filled.isel(depth=hML_idx).values)):
+        if (rho_diff_filled.isel(depth=hML_idx).values[i] == 999):
+            hML_idx[i] = len(rho.depth) - 1
+
+    # Get the depth corresponding to hML_idx
+    hML = rho.depth.isel(depth=hML_idx)
+    if hML.size == 1:
+            hML = hML.values.item()
     return hML
 
 def wedderburn(delta_rho, metaT, uSt, AvHyp_rho, Lo=False, Ao=False, g=9.81):
@@ -679,10 +770,7 @@ def buoyancy_freq(Temp, depth=None, g=9.81):
     
     Returns
     ----------
-    n2: array_like
-        a vector of buoyancy frequency in units \code{sec^-2}.
-    n2depth: array_like
-        Return value has attribute "depth" which define buoyancy frequency depth (which differ from supplied depth).
+    n2: xarray with buoyancy frequency in units {sec^-2} and associated average lake depths (can be different from input depths).
     
     Example
     ----------
@@ -787,3 +875,72 @@ def Monin_Obukhov(ustar, JB0):
     '''
     LMO = ustar**3/0.4/JB0
     return LMO
+
+def oxygen_solubility(T, saturation=100):
+    """
+    Oxygen solubility in freshwater (mg/L) according to Benson & Krause (1984),
+    without salinity effect (suitable for lakes).
+
+    Parameters
+    ----------
+    T : float or np.ndarray
+        Temperature in °C
+    saturation : float or np.ndarray, optional
+        Oxygen saturation in percent. Default is 100 for full saturation.
+
+    Returns
+    -------
+    O2 : float or np.ndarray
+        Oxygen concentration in mg/L corresponding to the given saturation.
+        If saturation=100, this is the solubility at equilibrium with air.
+    """
+    T_K = T + 273.15
+    # Benson & Krause formula (logarithm of solubility)
+    ln_O2 = (-139.34411 + 1.575701e5/T_K
+             - 6.642308e7/T_K**2
+             + 1.243800e10/T_K**3
+             - 8.621949e11/T_K**4)
+    
+    O2_100 = np.exp(ln_O2)  # mg/L at 100% saturation
+
+    # Scale by percent saturation
+    O2_actual = O2_100 * saturation / 100.0
+    
+    return O2_actual
+
+def pressure_correction_to_DO(T, altitude):
+    """
+    Correct oxygen saturation for altitude/pressure effects.
+    
+    Parameters
+    ----------
+    T : float or array
+        Temperature in °C
+    altitude : float
+        Altitude above sea level in meters
+    
+    Returns
+    -------
+    press_corr : float or array
+        Pressure correction factor (multiply O2 saturation at sea level by this)
+    """
+    mmHg_mb = 0.750061683
+    mmHg_inHg = 25.3970886
+    standard_pressure_sea_level = 29.92126  # inHg
+    standard_temperature_sea_level = 15 + 273.15  # K
+    g = 9.80665  # m/s² (fixed standard gravity)
+    air_molar_mass = 0.0289644
+    universal_gas_constant = 8.31447
+
+    # barometric pressure at altitude (in inHg)
+    baro = (1. / mmHg_mb) * mmHg_inHg * standard_pressure_sea_level * np.exp(
+        (-g * air_molar_mass * altitude) /
+        (universal_gas_constant * standard_temperature_sea_level)
+    )
+    
+    # water vapor pressure (mmHg) using Antoine equation
+    u = 10 ** (8.10765 - 1750.286 / (235 + T))
+    
+    # correction factor
+    press_corr = (baro * mmHg_mb - u) / (760 - u)
+    return press_corr
